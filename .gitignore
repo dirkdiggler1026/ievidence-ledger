@@ -1,0 +1,7 @@
+# foundry build output
+out/
+cache/
+
+# secrets — never committed
+.env
+*.env
