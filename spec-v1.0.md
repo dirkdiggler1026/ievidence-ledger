@@ -54,6 +54,8 @@ function latestCommittedBlock() external view returns (uint64);
 
 - **为什么 storage 而不是只发 event**:`getRoundHash()` 是只读 state 函数,读不到 event。0.32 gwei 下 storage 代价可忽略;丢掉读接口 = 丢掉"未来可被消费"叙事。event 仍发(作索引/展示),但不作为真相源。
 - 存储布局建议:`CommitRecord` 与 `lastCommittedBlock` 打包,`roundHash`+`canon` 同 slot 或相邻,由实现按 gas 微调。
+  - 🔴 **预算约束(2026-09-12 估算,待 46630 实测)**:`bytes32 + uint8` = 33 字节,**放不进同一个 slot** ⇒ 若逐轮写两槽(40k gas/轮),1,042 轮 ≈ **0.0133 ETH**;若改成"哈希一槽/轮 + canon 单独打包(32 个/槽)",≈ **0.0069 ETH**。而 09-12 到账余额为 **0.00794 ETH**(VPS 报,未本地核实)⇒ **朴素布局会超支**。
+  - ⇒ 实现顺序:**先在 46630 用一小批(约 100 轮)实测每轮 gas**,再据此定布局(倾向"哈希一槽 + canon 打包")、定批大小,并在需要时补提;补提路径已证实可行(OKX 直提 4663 成功)。
 - **命名**:链上映射叫 `records`(真相源),数据文件里的 `committed` 字段恒为 `false`(§5)。同名反义在本项目里算错误类型,故不共用这个词。
 
 ## 4. 键与顺序
@@ -80,7 +82,9 @@ function latestCommittedBlock() external view returns (uint64);
 ## 6. 提交模型 [应用]
 
 - 批量回填,本地短会话集中提交(非实时 relay);每轮哈希来自 VPS manifest `roundKeccak`。
-- 批大小 64–128 轮/笔(41 B/轮 calldata);主网全期轮数按 **09-25 回填日实数**填(旧估算 ~1,000 轮,待回填时替换)【09-12 回填实数】。
+- **回填范围(口径写死)**:覆盖 `data/<严格 YYYY-MM-DD>/rounds.jsonl` 中 `canon=rhdepth-v2` 的**全部轮次**,排除 `*.defective*` / `*.pre-pinned-block` / `snapshot-*`(快照是 09-04 目录的副本,已核 **12/12 重复**);截至 **2026-09-11 为 370 轮**(09-04=34;09-05…09-11 各 48),按 48 轮/天推算 **09-25 约 1,042 轮**;实数以执行日 `tools/round_count.py` 输出为准。批大小 64–128 轮/笔(41 B/轮 calldata)。
+  - ⚠️ **不要把 commit message 里的数字当口径**:标签写的是**全树合计**(含隔离目录与快照副本),如 `365`(09-10)/`413`(09-11);与本节的 v2 严格日期口径相差 **43 轮**(隔离 31 + 快照副本 12)。
+- **回填执行日可前移**(建议 ~09-22,避开 9 月底补贴到期这一外部变量);因为上一条定义为"截至执行日",日期挪动**不需要改本 spec**。
 - 幂等:重跑对已提交 block 直接 revert(§4 严格递增),无重复提交风险。
 - commit 成功 + 回执确认后,追加写入本地 `commits.jsonl`(§5),不触碰采集文件。
 
@@ -103,6 +107,7 @@ function latestCommittedBlock() external view returns (uint64);
 
 ## 8. 部署与地址 [应用](09-12 后回填)
 
+- 部署/出资地址(4663):`0x4eFAE5B817d561602F17411C716c8C03211D9D9b` —— 2026-09-12 由 OKX 直提到账;余额 **0.00794 ETH**(VPS 报,未本地核实)⇒ 见 §3 预算约束:先用一小批实测 gas,再定布局与是否补提。
 - 端点(已入本地 `.env`):46630 = `rpc.testnet.chain.robinhood.com`;4663 = `rpc.mainnet.chain.robinhood.com`
 - 主网 gas = **ETH**;充值首选 **OKX 直接提币至 4663**(提币网络选 Robinhood Chain 主网;先小额试提 → `cast balance` 验到账);备选 = Arbitrum canonical bridge(portal.arbitrum.io,对所有人开放);所需量小(~0.01–0.05 ETH,含 L1 data fee;批量 41B/轮已最小化 calldata)
 - 本地迭代可选 `anvil --fork $RPC_MAINNET`(快、免费、可重放真实状态),但正式部署路径仍为 46630 迭代 → 4663 终版
