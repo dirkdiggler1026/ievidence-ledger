@@ -50,12 +50,16 @@ function commitBatch(uint64[] calldata blocks, bytes32[] calldata roundHashes) e
 
 function getRoundHash(uint64 blockRef) external view returns (bytes32, uint8 canon);
 function latestCommittedBlock() external view returns (uint64);
+
+function transferOwnership(address newOwner) external onlyOwner;   // 两步转移:发起
+function acceptOwnership() external;                                // 两步转移:新 owner 主动接受
 ```
 
 - **为什么 storage 而不是只发 event**:`getRoundHash()` 是只读 state 函数,读不到 event。0.32 gwei 下 storage 代价可忽略;丢掉读接口 = 丢掉"未来可被消费"叙事。event 仍发(作索引/展示),但不作为真相源。
+- **owner 两步转移(2026-09-12 加,冻结前)**——`transferOwnership` + `acceptOwnership`(新 owner 必须主动接受,防止手误转到不可用地址)。理由:**没有它,owner key 一旦出问题,唯一出路是重新部署**(地址变、所有引用断)。⚠️ 诚实边界:它只救"**已知泄露、但尚未被使用**"那段时间窗;攻击者若已用该 key 行动,转移救不了。
 - 存储布局建议:`CommitRecord` 与 `lastCommittedBlock` 打包,`roundHash`+`canon` 同 slot 或相邻,由实现按 gas 微调。
-  - 🔴 **预算约束(2026-09-12 估算,待 46630 实测)**:`bytes32 + uint8` = 33 字节,**放不进同一个 slot** ⇒ 若逐轮写两槽(40k gas/轮),1,042 轮 ≈ **0.0133 ETH**;若改成"哈希一槽/轮 + canon 单独打包(32 个/槽)",≈ **0.0069 ETH**。而 09-12 到账余额为 **0.00794 ETH**(VPS 报,未本地核实)⇒ **朴素布局会超支**。
-  - ⇒ 实现顺序:**先在 46630 用一小批(约 100 轮)实测每轮 gas**,再据此定布局(倾向"哈希一槽 + canon 打包")、定批大小,并在需要时补提;补提路径已证实可行(OKX 直提 4663 成功)。
+  - **预算(2026-09-12 修正)**:`bytes32 + uint8` = 33 字节,放不进同一 slot ⇒ 朴素布局每轮 2 槽。按 `ArbGasInfo.perStorageAllocation` 直读值(**2.0147e12 wei/槽** = 20,000 gas × 0.1010 gwei;来源:VPS 2026-09-12 直读,未本地核实),2,084 槽 ≈ **0.0042 ETH** ⇒ 早先按 0.32 gwei 估出的 0.0133 ETH **偏保守约 3 倍,"朴素布局会超支"这一结论撤回**。
+  - ⇒ 纪律不变:**先在 46630 用一小批(约 100 轮)实测每轮 gas**,再据实定布局与批大小(倾向"哈希一槽 + canon 打包"以留余量),不以估算结案。到账余额见 §8。
 - **命名**:链上映射叫 `records`(真相源),数据文件里的 `committed` 字段恒为 `false`(§5)。同名反义在本项目里算错误类型,故不共用这个词。
 
 ## 4. 键与顺序
@@ -71,6 +75,8 @@ function latestCommittedBlock() external view returns (uint64);
 - 唯一键 = **block**(uint64)。roundTs 不进键、不进哈希原像——第三方无法复现(报告可复核性节已排除 ts/latency)。
 - 去重/顺序:`require(blocks[i] > lastCommittedBlock)`,严格递增即拒重复、保 append-only 顺序。
 - ts 仅作展示:每笔 commitBatch 的 event 可携带范围信息,不参与存储键。
+- 🔴 **单调水印的代价(2026-09-12 补)**:owner key 泄露的后果**不是"追加可被复算发现的噪声"**,而是**未来槽位被永久占住**——攻击者可对一个很远的未来 `blockRef` 写入一条记录,把 `lastCommittedBlock` 推上去,此后所有真实轮次都写不进(小于水印即 revert),且合约本身无回退手段。缓解三件:① owner 两步转移(§3,只救"尚未被使用"的窗口);② 部署侧纪律(keystore、key 不用即换、不与其他服务共用);③ 上线后加看门狗——任何非我方发出的 commit 立即告警。
+  - **可选加固(待定,窗口内决定)**:提交时加上界 `require(blockRef <= block.number)`,可在**数据源链(4663)上**彻底消除"未来区块号"攻击。⚠️ 但它对**迭代账本不成立**:46630 上部署、记录的是 4663 的区块号,两条链 `block.number` 序列不同 ⇒ 若采用,只能"主网版本带、测试网版本不带"(接受一次有文档的实现差异)。
 
 ## 5. 不可变性硬约束 [通用]
 
