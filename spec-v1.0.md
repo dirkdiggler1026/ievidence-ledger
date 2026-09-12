@@ -85,6 +85,7 @@ function acceptOwnership() external;                                // 两步转
 - **链 = "哪些轮已提交"的唯一真相**(`latestCommittedBlock()` / `getRoundHash()` 查询即答);数据文件不承担镜像职责。
 - 🔴 **任何工具判断"某轮是否已上链",只能查账本**(`getRoundHash` / `latestCommittedBlock`)或本地 **append-only** `commits.jsonl`(新文件、新校验和);**不得读数据文件的 `committed` 字段**——该字段按本节恒为 `false`。(先例与教训:报告仓库 `05cf709`;此处静默失败且只在 demo 当天发作,属规范约束而非实现细节。)
 - 本地索引如需镜像,用**独立 append-only** `commits.jsonl`:{block, txHash, committedAt};不碰任何已发布字节。
+- 🔴 **本节承诺的边界(2026-09-12 补,防误读)**:「已发布只增不改」在机制上由**分支规则集**(禁止 force push / 禁止删除分支,bypass 留空)部分支撑——它使**已发布提交不可被抹除或改写**,但**不阻止有推送权的人追加一条新提交去修改文件**。因此 `verify.py` 打印的「锚点:git 历史」的含义是:**改动无法隐藏,而不是无法发生**;第一档保证(可独立复现)来自**链上重放**,不来自这条规则。
 
 ## 6. 提交模型 [应用]
 
