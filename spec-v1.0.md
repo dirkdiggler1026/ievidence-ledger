@@ -130,7 +130,7 @@ function acceptOwnership() external;                                // 两步转
 | mainnet 正式账本 | 4663 | 【回填】 | 终版;主网回填覆盖 §1 范围 |
 
 - 部署顺序:46630 迭代 → 4663 终版(最终版前不在主网部署其它合约)。
-- 私钥仅本地 `.env`;VPS 只拿 ABI/地址,不拿 key。
+- **私钥不进任何文件**:本地用**加密 keystore**(`cast wallet import`,调用时 `--account deployer` + 交互输密码);`.env` 只放 RPC 端点;VPS 只拿 ABI 与地址,**不拿 key、也不拿 keystore**。(2026-09-12 修正:旧表述"私钥仅本地 `.env`"已作废。)
 
 ## 9. 只读边界 [通用](公开声明,入 README/demo)
 
