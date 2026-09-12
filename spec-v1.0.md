@@ -113,8 +113,11 @@ function acceptOwnership() external;                                // 两步转
 
 ## 8. 部署与地址 [应用](09-12 后回填)
 
-- 部署/出资地址(4663):~~`0x4eFAE5B817d561602F17411C716c8C03211D9D9b`~~ —— **2026-09-12 弃用**(该 key 前缀经 PowerShell 明文历史暴露;见报告仓库外的 `LOCAL-SETUP.md` §密钥与凭据纪律)。原余额 0.00794 ETH(VPS 报,未本地核实):**弃用或扫走,二选一**。
-- **新 deployer 地址:`【回填】`** —— 生成新 key → `cast wallet import <name> --interactive` → 测试网 faucet / 主网 OKX 提到新地址;此后一律 `--account <name>`。**冒烟部署必须用新 key 做**,否则 §8 会记下一个已弃用地址。
+- 部署/出资地址(4663):~~`0x4eFAE5B817d561602F17411C716c8C03211D9D9b`~~ —— **2026-09-12 弃用**(该 key 前缀经 PowerShell 明文历史暴露;见报告仓库外的 `LOCAL-SETUP.md` §密钥与凭据纪律)。原余额已发回交易所,地址清空。
+- **新 deployer 地址(keystore 账户名 `deployer`):`0x9d55010a9Cedb34aA1c5A94984ad0e076ec135E2`**
+  - 2026-09-12 本地 `cast` 直读核实:EIP-55 校验和合法;测试网(46630)余额 **0.01 test ETH**(faucet 已领);主网(4663)余额 **0**。
+  - **主网充值待做(回填前)**:OKX → 提币网络选 Robinhood Chain(4663)→ 小额(0.003–0.005 ETH)。
+  - 此后一律 `--account deployer`:**私钥不进 `.env`、不进命令行、不进聊天**。冒烟部署起就用本账户。
 - 端点(已入本地 `.env`):46630 = `rpc.testnet.chain.robinhood.com`;4663 = `rpc.mainnet.chain.robinhood.com`
 - 主网 gas = **ETH**;充值首选 **OKX 直接提币至 4663**(提币网络选 Robinhood Chain 主网;先小额试提 → `cast balance` 验到账);备选 = Arbitrum canonical bridge(portal.arbitrum.io,对所有人开放);所需量小(~0.01–0.05 ETH,含 L1 data fee;批量 41B/轮已最小化 calldata)
 - 本地迭代可选 `anvil --fork $RPC_MAINNET`(快、免费、可重放真实状态),但正式部署路径仍为 46630 迭代 → 4663 终版
