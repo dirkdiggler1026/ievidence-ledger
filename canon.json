@@ -1,0 +1,6 @@
+{
+  "note": "Single source for the canon name -> value mapping (spec section 7 defines the values). Both script/Deploy.s.sol and tools/record_deployment.py read this file, so the mapping exists once. Previously it existed twice, in two languages, with nothing comparing them.",
+  "canons": {
+    "rhdepth-v2": 2
+  }
+}

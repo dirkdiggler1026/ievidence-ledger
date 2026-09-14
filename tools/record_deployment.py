@@ -233,6 +233,33 @@ def validate_record(rec: dict) -> list[str]:
     return problems
 
 
+def canon_values(root: Path) -> dict[str, int]:
+    """The canon name -> value mapping, read from canon.json.
+
+    Not a literal. This file used to carry its own `expected 2`, which is the same fact that
+    script/Deploy.s.sol carried in a keccak comparison, in a different language, with nothing
+    comparing the two. On the day a new canon arrives, one of them would be updated and the
+    other would reject a correct deployment -- or accept the wrong one. Duplication is only
+    safe when something checks it; a single source needs no check.
+
+    This also fixes the wording of the error below: it used to read "expected 2 for
+    {canon_name}", which looks like 2 is derived from the name. It was not. Now it is.
+    """
+    path = root / "canon.json"
+    if not path.is_file():
+        raise SystemExit(f"{path} not found: it is the single source of the canon mapping")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    canons = data.get("canons")
+    if not isinstance(canons, dict) or not canons:
+        raise SystemExit(f"{path}: 'canons' must be a non-empty object")
+    out: dict[str, int] = {}
+    for name, value in canons.items():
+        if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 255:
+            raise SystemExit(f"{path}: canon {name!r} must map to an integer in 1..255")
+        out[name] = value
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--chain-id", type=int, required=True)
@@ -292,8 +319,16 @@ def main() -> int:
     canon_onchain, err = call_uint(url, dep["address"], sel["canon"])
     if canon_onchain is None:
         problems.append(f"CANON() call failed: {err}")
-    elif canon_onchain != 2:
-        problems.append(f"CANON() is {canon_onchain}, expected 2 for {canon_name}")
+    else:
+        expected_canon = canon_values(root).get(canon_name)
+        if expected_canon is None:
+            problems.append(
+                f"canon {canon_name!r} is not in canon.json, so the deployment cannot be "
+                f"checked; the chain reports CANON() = {canon_onchain}")
+        elif canon_onchain != expected_canon:
+            problems.append(
+                f"CANON() is {canon_onchain}, but canon.json maps {canon_name!r} to "
+                f"{expected_canon}")
 
     watermark, err = call_uint(url, dep["address"], sel["watermark"])
     if watermark is None:

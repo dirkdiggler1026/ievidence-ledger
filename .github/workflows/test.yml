@@ -47,6 +47,35 @@ jobs:
           fi
           echo "OK: no byte-order marks"
 
+      # The canon name -> value mapping has one source. It used to have two -- a keccak
+      # comparison in script/Deploy.s.sol and a literal in tools/record_deployment.py -- with
+      # nothing comparing them, which would have rejected a correct deployment on the day a new
+      # canon arrived. Guard the single source and guard against the literal creeping back.
+      - name: canon.json is the single source of the canon mapping
+        run: |
+          python -c "
+          import json
+          canons = json.load(open('canon.json'))['canons']
+          assert canons, 'canon.json has no canons'
+          for name, value in canons.items():
+              assert isinstance(value, int) and not isinstance(value, bool), (name, value)
+              assert 1 <= value <= 255, (name, value)
+          print('canon.json OK:', canons)
+          "
+          # Only the comparison is checked, not the wording. The first version of this check
+          # also matched "expected N for", which is prose inside a docstring explaining what
+          # the old message used to say -- so the check failed on its own comment. A text check
+          # has to aim at the code, not at anything mentioning the code.
+          if grep -nE 'canon_onchain[[:space:]]*!=[[:space:]]*[0-9]+' tools/record_deployment.py; then
+            echo "FAIL: the canon value is hardcoded in the recorder again; read canon.json"
+            exit 1
+          fi
+          if grep -nE 'keccak256\(bytes\("rhdepth' script/Deploy.s.sol; then
+            echo "FAIL: the canon mapping is hardcoded in the deploy script again"
+            exit 1
+          fi
+          echo "OK: the mapping appears once"
+
       # The ABI is committed so a consumer can `git pull` it instead of keeping a second copy.
       # A committed derived file is only safe if something checks it, so this is that check.
       - name: The committed ABI must match the contract

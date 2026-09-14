@@ -43,12 +43,27 @@ contract Deploy is Script {
     error UnknownCanon(string name);
     error OwnerIsNotBroadcaster(address owner, address broadcaster);
 
-    /// @dev Canon names to their on-chain values. The mapping is fixed by spec §7
-    ///      (2 = rhdepth-v2); it is not a decision this script is entitled to make. Choosing
+    /// @dev Canon name to on-chain value, read from `canon.json`.
+    ///
+    ///      spec §7 fixes the mapping; it is not a decision this script may make. Choosing
     ///      *which* canon to deploy is the operator's, and arrives through LEDGER_CANON.
-    function _canonValue(string memory name) internal pure returns (uint8) {
-        if (keccak256(bytes(name)) == keccak256(bytes("rhdepth-v2"))) return 2;
-        revert UnknownCanon(name);
+    ///
+    ///      The mapping lives in `canon.json` rather than here because it used to live in two
+    ///      places at once -- a keccak comparison in this file and a literal `2` in
+    ///      tools/record_deployment.py -- with nothing comparing them. On the day canon v3
+    ///      arrives, adding "rhdepth-v3" here while the recorder still asserted 2 would have
+    ///      rejected a correct v3 deployment, and editing one of the two would have been a
+    ///      coin flip. One source, read by both.
+    function _canonValue(string memory name) internal view returns (uint8) {
+        string memory json = vm.readFile("canon.json");
+        string memory path = string.concat(".canons[\"", name, "\"]");
+        if (!vm.keyExistsJson(json, path)) revert UnknownCanon(name);
+        uint256 value = vm.parseJsonUint(json, path);
+        // Zero is refused here for the same reason the contract refuses it: it is the value
+        // the absent-round signal occupies. The contract is the actual guarantee; this keeps
+        // the script from producing a transaction that is certain to revert.
+        if (value == 0 || value > type(uint8).max) revert UnknownCanon(name);
+        return uint8(value);
     }
 
     function run() external returns (EvidenceLedger ledger) {
