@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tomllib
@@ -159,6 +160,79 @@ def git_head(root: Path) -> str:
                           capture_output=True, text=True).stdout.strip()
 
 
+# --------------------------------------------------------------------------------------
+# The schema, enforced on the way out.
+#
+# The read side (the consumer) refuses a record with a missing field, an unknown extra field,
+# a malformed address/owner/txHash, deployBlock <= 0, a non-integer chainId (bool included),
+# a malformed optimizer, milliseconds in deployedAt, or an empty canon. Those checks exist
+# because a reader must not half-read a record it does not understand.
+#
+# The same set is checked here, on the way out, for the opposite reason: a writer must not
+# produce a record the reader will reject. Without this, the two sides would disagree only at
+# the moment it matters, and the disagreement would look like the reader being wrong.
+#
+# An unknown extra field is refused in both directions on purpose. It means one side changed
+# the schema and the other did not; failing is better than writing a record nobody can read.
+# --------------------------------------------------------------------------------------
+SCHEMA_KEYS = {
+    "chainId", "address", "deployBlock", "deployTxHash", "canon", "owner",
+    "solc", "evmVersion", "optimizer", "sourceCommit", "deployedAt",
+}
+
+ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+HASH_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
+TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+
+def _is_int(v) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def validate_record(rec: dict) -> list[str]:
+    problems: list[str] = []
+
+    missing = SCHEMA_KEYS - set(rec)
+    extra = set(rec) - SCHEMA_KEYS
+    if missing:
+        problems.append(f"missing fields: {sorted(missing)}")
+    if extra:
+        problems.append(f"unknown fields: {sorted(extra)} — the reader refuses these by design")
+
+    if not _is_int(rec.get("chainId")):
+        problems.append(f"chainId is not an integer: {rec.get('chainId')!r}")
+    if not ADDRESS_RE.match(str(rec.get("address") or "")):
+        problems.append(f"address is not 20 bytes of hex: {rec.get('address')!r}")
+    if not _is_int(rec.get("deployBlock")) or rec["deployBlock"] < 1:
+        problems.append(f"deployBlock is not a positive integer: {rec.get('deployBlock')!r}")
+    if not HASH_RE.match(str(rec.get("deployTxHash") or "")):
+        problems.append(f"deployTxHash is not 32 bytes of hex: {rec.get('deployTxHash')!r}")
+    if not isinstance(rec.get("canon"), str) or not rec["canon"].strip():
+        problems.append(f"canon is empty or not a string: {rec.get('canon')!r}")
+    if not ADDRESS_RE.match(str(rec.get("owner") or "")):
+        problems.append(f"owner is not 20 bytes of hex: {rec.get('owner')!r}")
+    for key in ("solc", "evmVersion", "sourceCommit"):
+        if not isinstance(rec.get(key), str) or not rec[key].strip():
+            problems.append(f"{key} is empty or not a string: {rec.get(key)!r}")
+
+    opt = rec.get("optimizer")
+    if not isinstance(opt, dict):
+        problems.append(f"optimizer is not an object: {opt!r}")
+    else:
+        if set(opt) != {"enabled", "runs"}:
+            problems.append(f"optimizer has unreadable keys: {sorted(opt)}")
+        if not isinstance(opt.get("enabled"), bool):
+            problems.append(f"optimizer.enabled is not a boolean: {opt.get('enabled')!r}")
+        if not _is_int(opt.get("runs")) or opt["runs"] < 0:
+            problems.append(f"optimizer.runs is not a non-negative integer: {opt.get('runs')!r}")
+
+    ts = rec.get("deployedAt")
+    if not isinstance(ts, str) or not TIMESTAMP_RE.match(ts):
+        problems.append(
+            f"deployedAt must be second-precision UTC Z, no milliseconds: {ts!r}")
+    return problems
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--chain-id", type=int, required=True)
@@ -254,6 +328,15 @@ def main() -> int:
         "deployedAt": datetime.fromtimestamp(block_ts, tz=timezone.utc)
                               .strftime("%Y-%m-%dT%H:%M:%SZ") if block_ts else None,
     }
+
+    # The reader refuses a record it cannot fully understand. Refuse to produce one.
+    shape = validate_record(record)
+    if shape:
+        print("REFUSING TO RECORD - this record would not be readable:")
+        for p in shape:
+            print(f"  x {p}")
+        return 1
+
     line = json.dumps(record, separators=(",", ":"))
 
     # --- append, idempotently ---------------------------------------------------------

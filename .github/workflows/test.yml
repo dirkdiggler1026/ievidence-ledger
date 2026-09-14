@@ -34,12 +34,18 @@ jobs:
       - name: Run Forge tests
         run: forge test -vvv
 
+      # The ABI is committed so a consumer can `git pull` it instead of keeping a second copy.
+      # A committed derived file is only safe if something checks it, so this is that check.
+      - name: The committed ABI must match the contract
+        run: python tools/export_abi.py --check
+
       # The on-chain guard is deliberately off-chain and lives in tools/. It is part of the
       # deliverable, so it is checked here rather than only on the machine that runs it.
       - name: Check the backfill tooling
         run: |
           python -m compileall -q tools
           python tools/round_count.py --help > /dev/null
+          python tools/record_deployment.py --help > /dev/null
 
       # "A value that has to be typed by hand is the only evidence that the decision has not
       # been taken by something else." Prove it stays that way. No --rpc-url, so this runs
