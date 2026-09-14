@@ -1,0 +1,25 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+
+# Pinned toolchain. The deployed bytecode is part of what this repo asks to be trusted about,
+# so the compiler is pinned rather than floating — same reasoning as pinning the round
+# serialisation: a re-derivation must not depend on whichever version happens to be current.
+solc_version = "0.8.36"
+
+# Robinhood Chain (4663) is an Arbitrum Orbit L2. `paris` avoids emitting PUSH0 entirely,
+# which takes the opcode-support question out of the deployment path. The cost is a little
+# execution gas — irrelevant here, because the dominant cost is per-slot storage allocation,
+# not opcodes. Corroboration: the one Sourcify-verified contract inspected on 4663 was
+# compiled for `paris`. Moving to `shanghai` later is a change to be measured on 46630,
+# not assumed.
+evm_version = "paris"
+
+optimizer = true
+optimizer_runs = 200
+
+[fmt]
+line_length = 100
+tab_width = 4
+bracket_spacing = false
