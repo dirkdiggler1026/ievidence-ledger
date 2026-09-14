@@ -150,10 +150,20 @@ def validate(rows: list[dict]) -> list[str]:
         elif len(h) != 66:
             problems.append(f"block {r['block']}: hash is {len(h) - 2} hex chars, not 32 bytes")
         elif int(h, 16) == 0:
-            # Zero is *not* rejected by the contract on purpose (canon==0 already marks
-            # absence), but a zero hash in the real payload would be a serious defect, so
-            # the plan refuses to build one in.
-            problems.append(f"block {r['block']}: zero hash")
+            # This check is not cosmetic, and it is not the contract's job either.
+            #
+            # The contract deliberately does NOT reject a zero hash: an unnecessary constraint
+            # does not belong in a frozen interface (decision B8's reasoning, applied to data).
+            # The consequence is that "getRoundHash returned zero, therefore this block was
+            # never committed" is NOT a contract invariant. It holds only because this side
+            # never submits a zero hash -- so this assertion is what makes the read side's
+            # absence test valid. Removing it silently breaks a property a consumer depends on.
+            #
+            # The stronger signal for a reader is canon == 0 (records[b] is only ever written
+            # with canon = CANON, and CANON is immutable and non-zero on the deploy path);
+            # spec §3 now states both, with their different supports.
+            problems.append(f"block {r['block']}: zero hash (would break the reader's "
+                            f"'absent' test, which relies on this side never submitting one)")
     return problems
 
 

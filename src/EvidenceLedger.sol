@@ -32,8 +32,16 @@ contract EvidenceLedger is IEvidenceLedger {
     /// @notice Address that may complete a two-step ownership transfer; zero if none pending.
     address public pendingOwner;
 
-    /// @notice Strictly increasing watermark. Also exposed as `latestCommittedBlock()`.
-    uint64 public lastCommittedBlock;
+    /// @notice Strictly increasing watermark.
+    /// @dev    `internal` on purpose (decision B12). The first frozen draft declared it
+    ///         `public`, which generated a second entry point — `lastCommittedBlock()` —
+    ///         alongside the `latestCommittedBlock()` that spec §5 and decision B5 actually
+    ///         name. Two entry points to one fact, both returning `uint64`, both plausible,
+    ///         nothing in the ABI to tell them apart, and a consumer left to guess; a guess
+    ///         that later diverged would fail silently. The getter was an artefact of the
+    ///         visibility keyword rather than a design decision, so it is the one that goes.
+    ///         `latestCommittedBlock()` below is the read interface.
+    uint64 internal lastCommittedBlock;
 
     /// @dev The source of truth for round hashes. Named `records`, not `committed`, on
     ///      purpose: `committed` is the name of a field in the published data files that is

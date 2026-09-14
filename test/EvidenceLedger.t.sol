@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {EvidenceLedger} from "../src/EvidenceLedger.sol";
 import {IEvidenceLedger} from "../src/IEvidenceLedger.sol";
 
-/// @notice First test set for the frozen interface (spec v1.0 §3, §4, §5).
+/// @notice First test set for the frozen interface (spec v1.0 搂3, 搂4, 搂5).
 ///         Covers: commit semantics, the monotonic watermark, read semantics for recorded
 ///         and absent rounds, the batch event, and both steps of the ownership transfer.
 contract EvidenceLedgerTest is Test {
@@ -48,7 +48,7 @@ contract EvidenceLedgerTest is Test {
     function test_ConstructorSetsOwnerAndCanon() public view {
         assertEq(ledger.owner(), OWNER, "owner");
         assertEq(ledger.CANON(), CANON, "canon");
-        assertEq(ledger.lastCommittedBlock(), 0, "watermark starts at zero");
+        assertEq(ledger.latestCommittedBlock(), 0, "watermark starts at zero");
         assertEq(ledger.latestCommittedBlock(), 0, "latestCommittedBlock agrees");
         assertEq(ledger.pendingOwner(), address(0), "no transfer pending");
     }
@@ -67,7 +67,7 @@ contract EvidenceLedgerTest is Test {
         assertEq(h1, HASH_B, "hash B");
         assertEq(c0, CANON, "canon A");
         assertEq(c1, CANON, "canon B");
-        assertEq(ledger.lastCommittedBlock(), BLOCK_B, "watermark is the last block");
+        assertEq(ledger.latestCommittedBlock(), BLOCK_B, "watermark is the last block");
         assertEq(ledger.latestCommittedBlock(), BLOCK_B, "latestCommittedBlock agrees");
     }
 
@@ -90,7 +90,7 @@ contract EvidenceLedgerTest is Test {
         vm.prank(OWNER);
         ledger.commitBatch(b2, h2);
 
-        assertEq(ledger.lastCommittedBlock(), BLOCK_B + 2, "watermark follows the second batch");
+        assertEq(ledger.latestCommittedBlock(), BLOCK_B + 2, "watermark follows the second batch");
     }
 
     // --- absent rounds --------------------------------------------------------------
@@ -111,7 +111,7 @@ contract EvidenceLedgerTest is Test {
         vm.expectRevert(abi.encodeWithSelector(EvidenceLedger.NotOwner.selector, STRANGER));
         ledger.commitBatch(blocks, hashes);
 
-        assertEq(ledger.lastCommittedBlock(), 0, "nothing written");
+        assertEq(ledger.latestCommittedBlock(), 0, "nothing written");
     }
 
     // --- input constraints (the two the spec states) --------------------------------
@@ -149,7 +149,7 @@ contract EvidenceLedgerTest is Test {
     }
 
     /// Re-running a backfill must be idempotent rather than duplicating: a batch whose first
-    /// block is at or below the watermark reverts (spec §6 "幂等").
+    /// block is at or below the watermark reverts (spec 搂6 "骞傜瓑").
     function test_ReplayOfCommittedBatch_Reverts() public {
         (uint64[] memory blocks, bytes32[] memory hashes) = _batch(BLOCK_A, HASH_A, BLOCK_B, HASH_B);
         vm.prank(OWNER);
@@ -174,7 +174,7 @@ contract EvidenceLedgerTest is Test {
         (bytes32 h, uint8 c) = ledger.getRoundHash(BLOCK_A);
         assertEq(h, bytes32(0), "no record written");
         assertEq(c, 0, "no canon written");
-        assertEq(ledger.lastCommittedBlock(), 0, "watermark untouched");
+        assertEq(ledger.latestCommittedBlock(), 0, "watermark untouched");
     }
 
     function test_EmptyBatch_IsNoOp() public {
@@ -184,7 +184,7 @@ contract EvidenceLedgerTest is Test {
         vm.prank(OWNER);
         ledger.commitBatch(blocks, hashes); // must not revert
 
-        assertEq(ledger.lastCommittedBlock(), 0, "watermark untouched");
+        assertEq(ledger.latestCommittedBlock(), 0, "watermark untouched");
     }
 
     /// "Harmless no-op" has to mean harmless on the wire too, not just in storage: an empty
@@ -252,7 +252,7 @@ contract EvidenceLedgerTest is Test {
         ledger.transferOwnership(STRANGER);
     }
 
-    /// After a completed transfer the old owner can no longer commit — the write path
+    /// After a completed transfer the old owner can no longer commit 鈥?the write path
     /// followed the transfer, which is the only reason to have one.
     function test_AfterTransfer_OldOwnerCannotCommit() public {
         vm.prank(OWNER);
@@ -268,7 +268,7 @@ contract EvidenceLedgerTest is Test {
 
         vm.prank(NEW_OWNER);
         ledger.commitBatch(blocks, hashes);
-        assertEq(ledger.lastCommittedBlock(), BLOCK_B, "new owner can commit");
+        assertEq(ledger.latestCommittedBlock(), BLOCK_B, "new owner can commit");
     }
 
     // --- fuzz ---------------------------------------------------------------------
@@ -281,7 +281,7 @@ contract EvidenceLedgerTest is Test {
         vm.prank(OWNER);
         ledger.commitBatch(blocks, hashes);
 
-        assertEq(ledger.lastCommittedBlock(), second, "watermark");
+        assertEq(ledger.latestCommittedBlock(), second, "watermark");
         (bytes32 h, uint8 c) = ledger.getRoundHash(first);
         assertEq(h, HASH_A, "first hash");
         assertEq(c, CANON, "first canon");
@@ -295,6 +295,6 @@ contract EvidenceLedgerTest is Test {
         vm.prank(OWNER);
         vm.expectRevert();
         ledger.commitBatch(blocks, hashes);
-        assertEq(ledger.lastCommittedBlock(), 0, "watermark untouched");
+        assertEq(ledger.latestCommittedBlock(), 0, "watermark untouched");
     }
 }

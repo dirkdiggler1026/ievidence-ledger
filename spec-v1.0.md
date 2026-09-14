@@ -44,7 +44,11 @@ struct CommitRecord {
 }
 
 mapping(uint64 blockRef => CommitRecord) internal records;   // 命名:见 §5,勿与数据文件的 committed 字段混淆
-uint64 public lastCommittedBlock;   // 严格递增水印
+uint64 internal lastCommittedBlock;   // 严格递增水印。**internal**(2026-09-14 改,决策 B12)
+// ↑ 原草案写 `public`。`public` 会额外生成一个 `lastCommittedBlock()` getter,
+//   与 §5 / B5 命名的 `latestCommittedBlock()` 构成【同一事实两个入口】,且两个都返回 uint64、
+//   公开 ABI 里无从分辨哪个权威 ⇒ 消费者只能猜,赌错的那个会【静默】坏掉。
+//   getter 是可见性关键字的副产品,不是设计决定 ⇒ 去掉它,只留 `latestCommittedBlock()`。
 
 function commitBatch(uint64[] calldata blocks, bytes32[] calldata roundHashes) external onlyOwner;
 // 约束:blocks 严格递增;两数组等长;逐轮写入一条 CommitRecord
@@ -55,6 +59,22 @@ function latestCommittedBlock() external view returns (uint64);
 function transferOwnership(address newOwner) external onlyOwner;   // 两步转移:发起
 function acceptOwnership() external;                                // 两步转移:新 owner 主动接受
 ```
+
+- 🔴 **"返回零 ⇒ 该块未提交"靠什么成立(2026-09-14 补,B12 / 提交侧守卫)** [通用]
+  读取端要回答"这一轮有没有锚"。这件事**不是合约不变量**,必须写明它靠什么撑住:
+  ```
+  ① canon 信号(可靠,推荐读取端用它)
+     records[b] 只在 commitBatch 里被写,写进去的 canon = CANON(immutable,构造时定)
+     ⇒ canon == 0 ⟺ 从未提交
+     ⚠️ 前提是 CANON != 0。当前部署路径的映射表只有 "rhdepth-v2" → 2,故 CANON 不可能为 0;
+        但**若有人绕过部署脚本、以 canon_ = 0 部署,这条就不成立** —— 这是部署侧约束,不是合约约束。
+  ② 哈希信号
+     合约【不】拒绝零哈希(不必要的约束不进冻结接口,方向与 B8 一致),
+     所以"零哈希 ⇒ 未提交"**只由提交侧保证"不提交零哈希"而成立**。
+     ⇒ 提交侧守卫必须含这条断言,与 `block > 数据源链头` 同级(链下、免费、不动合约)。
+     ✅ 已核:真实载荷 469 轮中零哈希 0 个;工具 tools/round_count.py 把它列为前置校验之一。
+  ⇒ 判据:D4 读取端**可以依赖 canon == 0**;若依赖零哈希,就必须同时引用提交侧这条保证。
+  ```
 
 - **为什么 storage 而不是只发 event**:`getRoundHash()` 是只读 state 函数,读不到 event。0.32 gwei 下 storage 代价可忽略;丢掉读接口 = 丢掉"未来可被消费"叙事。event 仍发(作索引/展示),但不作为真相源。
 - **owner 两步转移(2026-09-12 加,冻结前)**——`transferOwnership` + `acceptOwnership`(新 owner 必须主动接受,防止手误转到不可用地址)。理由:**没有它,owner key 一旦出问题,唯一出路是重新部署**(地址变、所有引用断)。⚠️ 诚实边界:它只救"**已知泄露、但尚未被使用**"那段时间窗;攻击者若已用该 key 行动,转移救不了。

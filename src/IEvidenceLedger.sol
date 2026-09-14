@@ -46,6 +46,13 @@ interface IEvidenceLedger {
 
     /// @notice The highest block ever committed. One call answers "which rounds are on chain"
     ///         (spec §5).
+    /// @dev    This is the only name for the watermark in the ABI. An earlier version also
+    ///         exposed `lastCommittedBlock()` — the automatic getter of a `public` state
+    ///         variable. That was the same fact behind two entry points, both returning
+    ///         `uint64`, both looking authoritative, with nothing in the ABI to say which one
+    ///         a consumer should read. A consumer had to guess, and a guess that later diverged
+    ///         would fail silently. Spec §5 and decision B5 both name this function; the
+    ///         getter was a Solidity by-product, so it is the one that goes (decision B12).
     function latestCommittedBlock() external view returns (uint64);
 
     /// @notice Start a two-step ownership transfer (spec §3, decision B7).
@@ -63,8 +70,4 @@ interface IEvidenceLedger {
 
     /// @notice Address that may accept ownership, or zero if no transfer is pending.
     function pendingOwner() external view returns (address);
-
-    /// @notice The monotonic watermark as a public variable getter (spec §3 declares this
-    ///         alongside `latestCommittedBlock()`; both are part of the frozen interface).
-    function lastCommittedBlock() external view returns (uint64);
 }

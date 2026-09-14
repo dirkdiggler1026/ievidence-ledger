@@ -34,6 +34,19 @@ jobs:
       - name: Run Forge tests
         run: forge test -vvv
 
+      # A BOM has bitten this repository twice: it makes the first pattern in .gitattributes
+      # silently ineffective (the pattern becomes "\ufeff*"), and forge fmt rejects a .sol file
+      # that starts with one. Cheaper to check than to remember.
+      - name: No byte-order marks in text files
+        run: |
+          if grep -rlI $'\xef\xbb\xbf' . \
+               --exclude-dir=.git --exclude-dir=lib --exclude-dir=out \
+               --exclude-dir=cache --exclude-dir=broadcast; then
+            echo "FAIL: byte-order mark found in the files listed above"
+            exit 1
+          fi
+          echo "OK: no byte-order marks"
+
       # The ABI is committed so a consumer can `git pull` it instead of keeping a second copy.
       # A committed derived file is only safe if something checks it, so this is that check.
       - name: The committed ABI must match the contract

@@ -78,19 +78,6 @@
     },
     {
       "type": "function",
-      "name": "lastCommittedBlock",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint64",
-          "internalType": "uint64"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "latestCommittedBlock",
       "inputs": [],
       "outputs": [
@@ -269,7 +256,6 @@
     "acceptOwnership()": "79ba5097",
     "commitBatch(uint64[],bytes32[])": "7a112582",
     "getRoundHash(uint64)": "99de752f",
-    "lastCommittedBlock()": "3acb097a",
     "latestCommittedBlock()": "d2ec073f",
     "owner()": "8da5cb5b",
     "pendingOwner()": "e30c3978",
