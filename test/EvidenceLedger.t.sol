@@ -187,6 +187,35 @@ contract EvidenceLedgerTest is Test {
         assertEq(ledger.lastCommittedBlock(), 0, "watermark untouched");
     }
 
+    /// "Harmless no-op" has to mean harmless on the wire too, not just in storage: an empty
+    /// batch must not put a `BatchCommitted` into the log stream, because the watchdog (D9)
+    /// and any indexer read that stream. Asserting the absence is cheaper than adding a
+    /// constraint to the frozen interface, and it pins the property that actually matters.
+    function test_EmptyBatch_EmitsNoEvent() public {
+        uint64[] memory blocks = new uint64[](0);
+        bytes32[] memory hashes = new bytes32[](0);
+
+        vm.recordLogs();
+        vm.prank(OWNER);
+        ledger.commitBatch(blocks, hashes);
+
+        assertEq(vm.getRecordedLogs().length, 0, "an empty batch must not emit");
+        assertEq(ledger.latestCommittedBlock(), 0, "watermark untouched");
+        assertEq(ledger.pendingOwner(), address(0), "nothing else changed either");
+    }
+
+    /// Same property for a batch that reverts: no log may survive a failed call.
+    function test_FailedBatch_EmitsNoEvent() public {
+        (uint64[] memory blocks, bytes32[] memory hashes) = _batch(BLOCK_A, HASH_A, BLOCK_A, HASH_B);
+
+        vm.recordLogs();
+        vm.prank(OWNER);
+        vm.expectRevert();
+        ledger.commitBatch(blocks, hashes);
+
+        assertEq(vm.getRecordedLogs().length, 0, "a reverted batch must not emit");
+    }
+
     // --- two-step ownership (decision B7) -------------------------------------------
 
     function test_TransferOwnership_RequiresAcceptance() public {

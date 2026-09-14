@@ -18,6 +18,13 @@ The data source is the public measurement series maintained in
 |---|---|
 | `spec-v1.0.md` | contract interface, canonical serialization, anchor model, demo scope |
 | `SPEC-DECISIONS.md` | the decision log behind the spec, including what was rejected and why |
+| `MEASUREMENTS.md` | measured slots and gas per round; what the on-chain figures are and are not |
+
+## Cost
+
+Two slots and ~45,650 gas per round, measured rather than estimated; one slot is written on
+top of that per batch. Neither gas nor calldata size constrains batch size on this chain —
+the binding constraint is how much work a failed batch would cost. See `MEASUREMENTS.md`.
 
 ## Anchor model
 
