@@ -261,15 +261,22 @@ def canon_values(root: Path) -> dict[str, int]:
 
 
 def key_separation_problems(existing: list[str], chain_id: int, owner: str) -> list[str]:
-    """Refuse to record a mainnet deployment whose owner already owned a testnet ledger.
+    """A backstop, not the protection.
 
-    The mainnet key must never have been through the testnet path: a leaked mainnet key lets an
-    attacker commit a forward block, which jams the watermark permanently with nothing in the
-    contract able to undo it, and two-step ownership only rescues the window between "known
-    leaked" and "used". So: two keys, and the mainnet key's first appearance is its deployment.
+    What this establishes: the address already owns a *recorded* 46630 ledger.
+    What it must not claim: that the address has been through testnet procedure. That is much
+    broader. The file cannot see a deployment whose recorder never ran or failed, a faucet
+    claim, an env var, a shell history, a test transaction, or an anvil rehearsal -- and
+    rehearsals are deliberately never recorded, so the rule that keeps this file honest is the
+    same rule that blinds this check. Both rules are right; the consequence is that passing
+    here is not evidence that a key is new.
 
-    A rule that lives only in a document is a rule that gets remembered wrong on deploy day.
-    The recorded deployments are enough to check it, and the check costs nothing.
+    The protection is timing: generate the mainnet key on the day it is first needed. A key that
+    does not exist cannot leak, and this check can only ever show "has not appeared", never
+    "is new".
+
+    A rule that lives only in a document is a rule that gets remembered wrong on deploy day, so
+    this runs even though it is not sufficient on its own.
     """
     if chain_id != 4663:
         return []
@@ -282,10 +289,12 @@ def key_separation_problems(existing: list[str], chain_id: int, owner: str) -> l
             continue
         if p.get("chainId") == 46630 and (p.get("owner") or "").lower() == owner.lower():
             return [
-                f"owner {owner} was already the owner of the 46630 iteration ledger "
-                f"(recorded at {p.get('address')}); that key has been through testnet "
-                f"procedure, so it must not own the mainnet ledger. Deploy 4663 with a key "
-                f"that has never appeared here."
+                f"owner {owner} already owns a recorded 46630 ledger (recorded at "
+                f"{p.get('address')}). The mainnet ledger must be deployed with a key that has "
+                f"not been used for testnet. NOTE: this check sees only *recorded* deployments "
+                f"-- rehearsals are never recorded by design, and it sees nothing of faucets, "
+                f"env vars, shell history or test transactions. Passing it means the address has "
+                f"not already owned a ledger we recorded; it is not evidence that the key is new."
             ]
     return []
 
@@ -329,35 +338,54 @@ def selftest() -> int:
                   variant(optimizer={"enabled": True}), False))
 
     failed = []
+    checked = 0
+
+    def record(label: str, ok: bool) -> None:
+        """Count every check where it is made, so the total cannot drift from the work.
+
+        The first version hardcoded `total = len(cases) + 4` and was wrong the moment two more
+        assertions were added. A count that has to be maintained by hand is the same defect as a
+        duplicated fact: it drifts, silently, and it is a claim about the code that the code does
+        not enforce.
+        """
+        nonlocal checked
+        checked += 1
+        if not ok:
+            failed.append(label)
+
     for name, rec, should_pass in cases:
         problems = validate_record(rec)
-        if bool(not problems) != should_pass:
-            failed.append(f"{name}: expected {'pass' if should_pass else 'refuse'}, got {problems}")
+        record(f"{name}: expected {'pass' if should_pass else 'refuse'}, got {problems}",
+               bool(not problems) == should_pass)
 
     # canon.json must resolve the name used in every record.
     try:
         values = canon_values(Path("."))
-        if "rhdepth-v2" not in values:
-            failed.append("canon.json does not define rhdepth-v2")
+        record("canon.json does not define rhdepth-v2", "rhdepth-v2" in values)
     except SystemExit as exc:
-        failed.append(f"canon.json unreadable: {exc}")
+        record(f"canon.json unreadable: {exc}", False)
 
-    # Key separation: same owner across chains refused, different owner allowed.
+    # Key separation: same owner refused, different owner allowed, testnet not checked -- and
+    # the message must claim no more than the check establishes.
     testnet_line = json.dumps({**good, "chainId": 46630, "owner": "0x" + "d" * 40})
-    if not key_separation_problems([testnet_line], 4663, "0x" + "d" * 40):
-        failed.append("key separation: same owner across chains was not refused")
-    if key_separation_problems([testnet_line], 4663, "0x" + "e" * 40):
-        failed.append("key separation: a different owner was refused")
-    if key_separation_problems([testnet_line], 46630, "0x" + "d" * 40):
-        failed.append("key separation: testnet deployment should not be checked")
+    same = key_separation_problems([testnet_line], 4663, "0x" + "d" * 40)
+    record("key separation: same owner across chains was not refused", bool(same))
+    message = same[0] if same else ""
+    record("key separation: message does not say what was established",
+           "recorded 46630 ledger" in message)
+    record("key separation: message does not state the guard's limit",
+           "not evidence that the key is new" in message)
+    record("key separation: a different owner was refused",
+           not key_separation_problems([testnet_line], 4663, "0x" + "e" * 40))
+    record("key separation: testnet deployment should not be checked",
+           not key_separation_problems([testnet_line], 46630, "0x" + "d" * 40))
 
-    total = len(cases) + 4
     if failed:
-        print(f"SELFTEST FAILED ({len(failed)} of {total})")
+        print(f"SELFTEST FAILED ({len(failed)} of {checked})")
         for f in failed:
             print(f"  x {f}")
         return 1
-    print(f"selftest OK ({total} checks)")
+    print(f"selftest OK ({checked} checks)")
     return 0
 
 
