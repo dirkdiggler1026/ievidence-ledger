@@ -89,6 +89,11 @@ jobs:
           python tools/round_count.py --help > /dev/null
           python tools/record_deployment.py --help > /dev/null
 
+      # The write side refuses the same set the read side refuses, plus key separation. The
+      # reader has a self-test; this is its mirror, and it touches no file and no network.
+      - name: Deployment recorder self-test
+        run: python tools/record_deployment.py --selftest
+
       # "A value that has to be typed by hand is the only evidence that the decision has not
       # been taken by something else." Prove it stays that way. No --rpc-url, so this runs
       # against a local EVM: the failure must come from the missing variable, not from a

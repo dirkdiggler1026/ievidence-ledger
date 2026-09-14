@@ -260,15 +260,125 @@ def canon_values(root: Path) -> dict[str, int]:
     return out
 
 
+def key_separation_problems(existing: list[str], chain_id: int, owner: str) -> list[str]:
+    """Refuse to record a mainnet deployment whose owner already owned a testnet ledger.
+
+    The mainnet key must never have been through the testnet path: a leaked mainnet key lets an
+    attacker commit a forward block, which jams the watermark permanently with nothing in the
+    contract able to undo it, and two-step ownership only rescues the window between "known
+    leaked" and "used". So: two keys, and the mainnet key's first appearance is its deployment.
+
+    A rule that lives only in a document is a rule that gets remembered wrong on deploy day.
+    The recorded deployments are enough to check it, and the check costs nothing.
+    """
+    if chain_id != 4663:
+        return []
+    for line in existing:
+        if not line.strip():
+            continue
+        try:
+            p = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if p.get("chainId") == 46630 and (p.get("owner") or "").lower() == owner.lower():
+            return [
+                f"owner {owner} was already the owner of the 46630 iteration ledger "
+                f"(recorded at {p.get('address')}); that key has been through testnet "
+                f"procedure, so it must not own the mainnet ledger. Deploy 4663 with a key "
+                f"that has never appeared here."
+            ]
+    return []
+
+
+def selftest() -> int:
+    """Exercise the write-side refusals. The reader has its own self-test; this is its mirror."""
+    good = {
+        "chainId": 46630,
+        "address": "0x" + "a" * 40,
+        "deployBlock": 1,
+        "deployTxHash": "0x" + "b" * 64,
+        "canon": "rhdepth-v2",
+        "owner": "0x" + "c" * 40,
+        "solc": "0.8.36",
+        "evmVersion": "paris",
+        "optimizer": {"enabled": True, "runs": 200},
+        "sourceCommit": "abc1234",
+        "deployedAt": "2026-09-17T00:00:00Z",
+    }
+
+    cases: list[tuple[str, dict, bool]] = []
+
+    def variant(**changes) -> dict:
+        out = dict(good)
+        out.update(changes)
+        return out
+
+    cases.append(("well-formed record accepted", good, True))
+    cases.append(("missing field refused", {k: v for k, v in good.items() if k != "canon"}, False))
+    cases.append(("unknown extra field refused", variant(note="rehearsal"), False))
+    cases.append(("short address refused", variant(address="0x1234"), False))
+    cases.append(("short tx hash refused", variant(deployTxHash="0x" + "b" * 10), False))
+    cases.append(("deployBlock 0 refused", variant(deployBlock=0), False))
+    cases.append(("bool chainId refused", variant(chainId=True), False))
+    cases.append(("milliseconds in deployedAt refused",
+                  variant(deployedAt="2026-09-17T00:00:00.123Z"), False))
+    cases.append(("empty canon refused", variant(canon=""), False))
+    cases.append(("optimizer.runs as string refused",
+                  variant(optimizer={"enabled": True, "runs": "200"}), False))
+    cases.append(("optimizer missing runs refused",
+                  variant(optimizer={"enabled": True}), False))
+
+    failed = []
+    for name, rec, should_pass in cases:
+        problems = validate_record(rec)
+        if bool(not problems) != should_pass:
+            failed.append(f"{name}: expected {'pass' if should_pass else 'refuse'}, got {problems}")
+
+    # canon.json must resolve the name used in every record.
+    try:
+        values = canon_values(Path("."))
+        if "rhdepth-v2" not in values:
+            failed.append("canon.json does not define rhdepth-v2")
+    except SystemExit as exc:
+        failed.append(f"canon.json unreadable: {exc}")
+
+    # Key separation: same owner across chains refused, different owner allowed.
+    testnet_line = json.dumps({**good, "chainId": 46630, "owner": "0x" + "d" * 40})
+    if not key_separation_problems([testnet_line], 4663, "0x" + "d" * 40):
+        failed.append("key separation: same owner across chains was not refused")
+    if key_separation_problems([testnet_line], 4663, "0x" + "e" * 40):
+        failed.append("key separation: a different owner was refused")
+    if key_separation_problems([testnet_line], 46630, "0x" + "d" * 40):
+        failed.append("key separation: testnet deployment should not be checked")
+
+    total = len(cases) + 4
+    if failed:
+        print(f"SELFTEST FAILED ({len(failed)} of {total})")
+        for f in failed:
+            print(f"  x {f}")
+        return 1
+    print(f"selftest OK ({total} checks)")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--chain-id", type=int, required=True)
+    ap.add_argument("--chain-id", type=int, default=None)
     ap.add_argument("--rpc-url", default=None,
                     help="defaults to $RPC_MAINNET for 4663, $RPC_TESTNET for 46630")
     ap.add_argument("--root", type=Path, default=Path("."))
     ap.add_argument("--file", type=Path, default=Path(DEFAULT_FILE))
     ap.add_argument("--dry-run", action="store_true", help="verify and print, do not append")
+    ap.add_argument("--selftest", action="store_true",
+                    help="exercise the write-side refusals; touches no file and no network")
     args = ap.parse_args()
+
+    if args.selftest:
+        return selftest()
+
+    if args.chain_id is None:
+        print("--chain-id is required (4663 or 46630)")
+        return 2
 
     root = args.root.resolve()
     url = args.rpc_url or os.environ.get(
@@ -348,6 +458,16 @@ def main() -> int:
             print(f"  x {p}")
         return 1
 
+    target = root / args.file
+    existing = target.read_text(encoding="utf-8").splitlines() if target.is_file() else []
+
+    separation = key_separation_problems(existing, args.chain_id, owner_env)
+    if separation:
+        print("REFUSING TO RECORD - key separation violated:")
+        for p in separation:
+            print(f"  x {p}")
+        return 1
+
     cs = compiler_settings(root)
     record = {
         "chainId": args.chain_id,
@@ -375,8 +495,6 @@ def main() -> int:
     line = json.dumps(record, separators=(",", ":"))
 
     # --- append, idempotently ---------------------------------------------------------
-    target = root / args.file
-    existing = target.read_text(encoding="utf-8").splitlines() if target.is_file() else []
     for prev in existing:
         if not prev.strip():
             continue
