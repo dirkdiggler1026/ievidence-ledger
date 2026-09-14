@@ -1,7 +1,13 @@
 # foundry build output
 out/
 cache/
+broadcast/
 
 # secrets — never committed
 .env
 *.env
+
+# Generated backfill input. The real list is emitted on the execution day from the
+# authoritative data directory and its sha256 is recorded then; committing an earlier
+# copy would be a stale input wearing the same name.
+backfill-list.jsonl
