@@ -54,6 +54,7 @@ contract EvidenceLedger is IEvidenceLedger {
     error ZeroAddress();
     error LengthMismatch(uint256 blocksLength, uint256 hashesLength);
     error BlocksNotIncreasing(uint64 previous, uint64 next);
+    error InvalidCanon(uint8 canon);
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner(msg.sender);
@@ -61,8 +62,20 @@ contract EvidenceLedger is IEvidenceLedger {
     }
 
     /// @param canon_ Canon version stamped on every round this deployment accepts.
-    ///               Pass 2 for rhdepth-v2.
+    ///               Pass 2 for rhdepth-v2. Zero is refused.
+    /// @dev    The refusal is what makes "canon == 0 means never committed" a property of the
+    ///         contract rather than of whoever deployed it. `IEvidenceLedger` documents that
+    ///         inference; without this check a deployment with `canon_ = 0` would stamp 0 on
+    ///         every record, the read interface would report every round as absent, and nothing
+    ///         along the way would fail -- deploy succeeds, commits succeed, tests pass, and the
+    ///         guarantee the interface states would simply be false for that deployment.
+    ///         The guarantee belongs where it is declared, not in a deploy script on someone's
+    ///         laptop: a third party reading this contract on Blockscout should be able to see
+    ///         it. The bound is `== 0` and not `< 2` deliberately: zero is the value the absent
+    ///         signal occupies, which is the minimum this invariant needs. Anything stricter
+    ///         would weld spec §7's version table into the contract.
     constructor(uint8 canon_) {
+        if (canon_ == 0) revert InvalidCanon(canon_);
         owner = msg.sender;
         CANON = canon_;
         emit OwnershipTransferred(address(0), msg.sender);

@@ -37,12 +37,17 @@ rather than a guess.
 
 `test/Gas.t.sol`, local EVM, solc 0.8.36, `evm_version = paris`, optimizer on:
 
+> Per-batch totals move by a few tens of gas when unrelated bytecode changes (a layout
+> shift, an added constructor check), so treat the individual totals as indicative. The
+> **marginal** figures below have been stable across every change so far, and they are the
+> ones the batch-size decision rests on.
+
 | rounds in batch | gas |
 |---|---|
-| 1 | 95,229 |
-| 8 | 414,758 |
-| 33 | 1,555,977 |
-| 129 | 5,938,896 |
+| 1 | 95,207 |
+| 8 | 414,736 |
+| 33 | 1,555,955 |
+| 129 | 5,938,874 |
 
 Marginal cost per additional round, measured at three spans rather than extrapolated:
 

@@ -49,8 +49,26 @@ contract EvidenceLedgerTest is Test {
         assertEq(ledger.owner(), OWNER, "owner");
         assertEq(ledger.CANON(), CANON, "canon");
         assertEq(ledger.latestCommittedBlock(), 0, "watermark starts at zero");
-        assertEq(ledger.latestCommittedBlock(), 0, "latestCommittedBlock agrees");
         assertEq(ledger.pendingOwner(), address(0), "no transfer pending");
+    }
+
+    /// Zero is the value the absent-round signal occupies, so a deployment stamping zero would
+    /// make every recorded round read as never committed -- with a successful deployment,
+    /// successful commits, and nothing anywhere reporting a problem. The interface documents
+    /// that inference, so the contract has to be what makes it true rather than a script on
+    /// someone's machine.
+    function test_Constructor_RejectsZeroCanon() public {
+        vm.prank(OWNER);
+        vm.expectRevert(abi.encodeWithSelector(EvidenceLedger.InvalidCanon.selector, 0));
+        new EvidenceLedger(0);
+    }
+
+    /// The bound is `== 0`, not `< 2`: only the absence value is refused, so a future canon
+    /// number stays a deploy-time choice rather than a contract change.
+    function test_Constructor_AcceptsOtherCanons() public {
+        vm.prank(OWNER);
+        EvidenceLedger other = new EvidenceLedger(3);
+        assertEq(other.CANON(), 3, "canon 3 is a valid deployment");
     }
 
     // --- commit ---------------------------------------------------------------------

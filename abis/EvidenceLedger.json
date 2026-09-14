@@ -209,6 +209,17 @@
     },
     {
       "type": "error",
+      "name": "InvalidCanon",
+      "inputs": [
+        {
+          "name": "canon",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "LengthMismatch",
       "inputs": [
         {
