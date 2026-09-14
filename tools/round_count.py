@@ -36,10 +36,19 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 CANON = "rhdepth-v2"
+
+# Console encoding is not guaranteed to be UTF-8 (often GBK on Windows), and a check that
+# crashes while reporting a failure is worse than no check. Force UTF-8 where possible and
+# keep the *printed* markers ASCII.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:  # noqa: BLE001
+    pass
 
 # Directories that must never enter the backfill set.
 #
@@ -148,6 +157,56 @@ def validate(rows: list[dict]) -> list[str]:
     return problems
 
 
+def rpc_head(url: str, timeout: int = 30):
+    """Current block number of a chain, over curl.
+
+    Not urllib: Python's TLS fingerprint is refused by some endpoints on this machine while
+    curl succeeds against the same URL (403 vs 200, measured). Same reasoning as the
+    measurement repository's rpc() helper.
+    """
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "eth_blockNumber", "params": []})
+    try:
+        out = subprocess.run(
+            ["curl", "-sS", "-m", str(timeout), "-X", "POST",
+             "-H", "Content-Type: application/json", "-d", body, url],
+            capture_output=True, text=True, timeout=timeout + 5,
+        ).stdout
+        data = json.loads(out or "{}")
+    except Exception as exc:  # noqa: BLE001
+        return None, f"{type(exc).__name__}: {exc}"
+    if "result" in data:
+        return int(data["result"], 16), None
+    return None, str((data.get("error") or {}).get("message") or "empty response")
+
+
+def guard_against_future_blocks(rows: list[dict], source_rpc: str) -> list[str]:
+    """Refuse to build a submit plan containing a block the data chain has not reached.
+
+    This is the cheap half of the guard against poisoning the ledger's watermark. The
+    watermark is monotonic: one commit at a block far in the future permanently blocks the
+    append path (every legitimate round is below it), there is no reset, and there is nothing
+    in the contract that can undo it. The ledger is therefore not allowed to be the first
+    place the mistake is noticed.
+
+    The comparison is deliberately against the *data source* chain (4663), not the chain the
+    ledger lives on. On the iteration ledger that distinction is the whole point: 46630's head
+    is around 119M while the rounds sit near 54-62M, so a bound against the ledger chain's
+    head would never fire. The spec reached the same conclusion for the on-chain version of
+    this guard and dropped it for exactly that reason (decision B8); off-chain, against the
+    right chain, it works.
+    """
+    head, err = rpc_head(source_rpc)
+    if head is None:
+        return [f"could not read the data-source chain head ({source_rpc}): {err}"]
+
+    above = [r for r in rows if r["block"] > head]
+    problems = [
+        f"{len(above)} round(s) above the data-source chain head {head:,}: "
+        f"first is block {above[0]['block']:,}" if above else ""
+    ]
+    return [p for p in problems if p]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--data", type=Path, default=None, help="path to the data/ directory")
@@ -157,6 +216,12 @@ def main() -> int:
         "--include-excluded-dirs",
         action="store_true",
         help="do not skip defective/pre-pinned/snapshot directories (diagnostics only)",
+    )
+    ap.add_argument(
+        "--source-rpc",
+        default=os.environ.get("RPC_MAINNET"),
+        help="data-source chain RPC (4663). When given, refuses any round above its head. "
+             "Defaults to $RPC_MAINNET.",
     )
     args = ap.parse_args()
 
@@ -171,7 +236,7 @@ def main() -> int:
     print(f"data root        {data_root}")
     print(f"rounds (canon={CANON}, deduped by block)   {len(rows)}")
     if rows:
-        print(f"block range      {rows[0]['block']:,} → {rows[-1]['block']:,}")
+        print(f"block range      {rows[0]['block']:,} -> {rows[-1]['block']:,}")
 
     dropped = [d for d in duplicates if is_excluded_dir(d["dropped_from"])]
     other_dup = [d for d in duplicates if not is_excluded_dir(d["dropped_from"])]
@@ -186,17 +251,28 @@ def main() -> int:
             print(f"                 {n} from {name} (all hash-identical: "
                   f"{all(x['hash_match'] for x in dropped if x['dropped_from'] == name)})")
     for d in other_dup:
-        print(f"                 ⚠️ block {d['block']} duplicated by {d['dropped_from']} "
+        print(f"                 !! block {d['block']} duplicated by {d['dropped_from']} "
               f"and {d['kept_from']}, hash_match={d['hash_match']}")
 
     problems = validate(rows)
+
+    # The watermark guard. Runs only when a source RPC is available: no RPC must not silently
+    # mean "no guard", so it is reported either way.
+    if args.source_rpc:
+        problems += guard_against_future_blocks(rows, args.source_rpc)
+    else:
+        print("head guard       SKIPPED (no --source-rpc and no $RPC_MAINNET). The watermark")
+        print("                 is monotonic; submit only blocks the data chain has reached.")
+
     print()
     if problems:
         print("PRECONDITION FAILURES")
         for p in problems:
-            print(f"  ✗ {p}")
+            print(f"  x {p}")
         return 1
-    print("preconditions    OK — strictly increasing, no duplicate blocks or hashes, "
+    if args.source_rpc:
+        print("head guard       OK - every round is at or below the data-source chain head")
+    print("preconditions    OK - strictly increasing, no duplicate blocks or hashes, "
           "no zero hashes, all 32 bytes")
 
     batch = args.batch
@@ -205,11 +281,11 @@ def main() -> int:
         return 2
     n_batches = (len(rows) + batch - 1) // batch
     print()
-    print(f"batch plan       {batch} rounds/batch → {n_batches} batches")
+    print(f"batch plan       {batch} rounds/batch -> {n_batches} batches")
     for i in range(n_batches):
         chunk = rows[i * batch : (i + 1) * batch]
         print(f"  batch {i + 1:>3}  {len(chunk):>3} rounds   "
-              f"{chunk[0]['block']:,} → {chunk[-1]['block']:,}")
+              f"{chunk[0]['block']:,} -> {chunk[-1]['block']:,}")
 
     if args.emit:
         args.emit.parent.mkdir(parents=True, exist_ok=True)

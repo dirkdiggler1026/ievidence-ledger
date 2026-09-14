@@ -3,6 +3,9 @@ out/
 cache/
 broadcast/
 
+# python bytecode from tools/
+__pycache__/
+
 # secrets — never committed
 .env
 *.env

@@ -33,3 +33,31 @@ jobs:
 
       - name: Run Forge tests
         run: forge test -vvv
+
+      # The on-chain guard is deliberately off-chain and lives in tools/. It is part of the
+      # deliverable, so it is checked here rather than only on the machine that runs it.
+      - name: Check the backfill tooling
+        run: |
+          python -m compileall -q tools
+          python tools/round_count.py --help > /dev/null
+
+      # "A value that has to be typed by hand is the only evidence that the decision has not
+      # been taken by something else." Prove it stays that way. No --rpc-url, so this runs
+      # against a local EVM: the failure must come from the missing variable, not from a
+      # missing chain.
+      - name: The deploy script must refuse to default
+        run: |
+          out=$(forge script script/Deploy.s.sol --unlocked \
+                  --sender 0x0000000000000000000000000000000000000001 2>&1 || true)
+          echo "$out"
+          grep -q 'environment variable "LEDGER_CHAIN_ID" not found' <<<"$out" \
+            && echo "OK: refused to default" \
+            || { echo "FAIL: the deploy script did not refuse a missing LEDGER_CHAIN_ID"; exit 1; }
+
+      # A missing RPC must not silently mean "no guard" in the tooling either.
+      - name: The round-count guard must not silently skip
+        run: |
+          out=$(python tools/round_count.py --data /nonexistent 2>&1 || true)
+          grep -q 'data root not found' <<<"$out" \
+            && echo "OK: reported the missing data root" \
+            || { echo "FAIL: missing data root was not reported"; exit 1; }

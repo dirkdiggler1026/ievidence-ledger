@@ -8,16 +8,27 @@ libs = ["lib"]
 # serialisation: a re-derivation must not depend on whichever version happens to be current.
 solc_version = "0.8.36"
 
-# Robinhood Chain (4663) is an Arbitrum Orbit L2. `paris` avoids emitting PUSH0 entirely,
-# which takes the opcode-support question out of the deployment path. The cost is a little
-# execution gas — irrelevant here, because the dominant cost is per-slot storage allocation,
-# not opcodes. Corroboration: the one Sourcify-verified contract inspected on 4663 was
-# compiled for `paris`. Moving to `shanghai` later is a change to be measured on 46630,
-# not assumed.
+# Robinhood Chain is an Arbitrum Orbit L2 running Nitro (verified: web3_clientVersion
+# nitro/v3.11.x on both 4663 and 46630). `paris` avoids emitting PUSH0 entirely, which takes
+# the opcode-support question out of the deployment path.
+#
+# This is the ONLY reason. An earlier version of this comment also claimed a cost argument —
+# "the dominant cost is per-slot storage allocation, not opcodes" — and that is wrong:
+# reading ArbGasInfo.getPricesInWei() at six historical blocks, storage allocation is exactly
+# perArbGasTotal * 20,000 in every row, so it IS the opcode, not a separate charge. The claim
+# is struck rather than quietly deleted; see MEASUREMENTS.md.
 evm_version = "paris"
 
 optimizer = true
 optimizer_runs = 200
+
+# Deploy.s.sol reads this file to print the settings Blockscout verification will need, so a
+# drift between what was built and what gets typed into the verifier shows up at deploy time.
+fs_permissions = [{ access = "read", path = "./foundry.toml" }]
+
+[rpc_endpoints]
+mainnet = "${RPC_MAINNET}"
+testnet = "${RPC_TESTNET}"
 
 [fmt]
 line_length = 100
