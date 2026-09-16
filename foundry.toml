@@ -29,6 +29,11 @@ optimizer_runs = 200
 fs_permissions = [
     { access = "read", path = "./foundry.toml" },
     { access = "read", path = "./canon.json" },
+    # Commit.s.sol reads the frozen list and the validator's record of having checked it. Both
+    # paths are pinned rather than opening the project root, so a script cannot read anything it
+    # was not granted -- including a .env, which is where a key would live if one were put here.
+    { access = "read", path = "./backfill-list.jsonl" },
+    { access = "read", path = "./backfill-checked.json" },
 ]
 
 [rpc_endpoints]

@@ -12,10 +12,19 @@ round's hash is.
 
 Usage:
     python tools/check_backfill_list.py [--list backfill-list.jsonl] [--data <executability-report>/data]
+    python tools/check_backfill_list.py --emit backfill-checked.json
+
+`--emit` writes a record of what was checked, including the sha256 of the list's bytes. The submit
+script refuses to enter its broadcast path unless that record exists and its hash matches the list
+it is about to commit. So "the list was validated" becomes a mechanical precondition rather than a
+step someone has to remember under time pressure -- the same reason the validator refuses on
+contradictions only.
 """
 from __future__ import annotations
 
 import argparse
+import datetime
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -28,6 +37,13 @@ except Exception:  # noqa: BLE001
 CANON = "rhdepth-v2"
 BATCH = 64                      # the rule, not a count: one batch is all-or-nothing, so its size
                                 # is the failure radius (see MEASUREMENTS.md)
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def canon_values() -> dict[str, int]:
+    """Name -> value from canon.json, the single source shared with the Solidity scripts."""
+    data = json.loads((ROOT / "canon.json").read_text(encoding="utf-8"))
+    return {k: int(v) for k, v in data["canons"].items()}
 
 
 def load_published(data: Path) -> dict[int, str]:
@@ -48,6 +64,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--list", type=Path, default=Path("backfill-list.jsonl"))
     ap.add_argument("--data", type=Path, default=Path(r"E:\executability-report\data"))
+    ap.add_argument("--emit", type=Path, default=None,
+                    help="write the checked record here (only when the list passes)")
     args = ap.parse_args()
 
     if not args.list.is_file():
@@ -142,8 +160,34 @@ def main() -> int:
         print(f"\nREFUSING: {len(problems)} problem(s)")
         for p in problems:
             print(f"  x {p}")
+        print("\nno record written: the submit path stays closed")
         return 1
+
+    values = canon_values()
+    if CANON not in values:
+        print(f"\nREFUSING: canon.json does not map {CANON!r}, so the submit script could not check"
+              f" the ledger's CANON() against it")
+        return 1
+
     print("\nLIST OK: shape, ordering, canon and every hash agree with the published data")
+    if args.emit:
+        record = {
+            "list": str(args.list),
+            "listSha256": "0x" + hashlib.sha256(args.list.read_bytes()).hexdigest(),
+            "entries": len(blocks),
+            "firstBlock": blocks[0] if blocks else None,
+            "lastBlock": blocks[-1] if blocks else None,
+            "canon": CANON,
+            "canonValue": values[CANON],
+            "batch": BATCH,
+            "checkedAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "checker": "tools/check_backfill_list.py",
+        }
+        args.emit.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8", newline="\n")
+        print(f"record written to {args.emit}")
+        print(json.dumps(record, indent=2))
+        print("\nthe submit script refuses to broadcast unless this record's listSha256 equals the")
+        print("sha256 of the list it reads, so an unvalidated list cannot reach the chain")
     return 0
 
 
