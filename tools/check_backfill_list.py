@@ -60,13 +60,75 @@ def load_published(data: Path) -> dict[int, str]:
     return out
 
 
+def selftest() -> int:
+    """Negative cases only, in a temp dir, with no published data and no network.
+
+    A checker that only ever sees good input proves nothing. Every case here is a list this
+    tool must REFUSE, including the two that used to pass: an entry whose hash was invented,
+    and an empty list. Mirrors record_deployment.py --selftest.
+    """
+    import subprocess
+    import tempfile
+
+    me = Path(__file__).resolve()
+    ok = True
+    with tempfile.TemporaryDirectory() as td:
+        t = Path(td)
+        (t / "emptydata").mkdir()
+        good = {"block": 54088399, "canon": CANON, "roundKeccak": "0x" + "11" * 32,
+                "source": "2026-09-04"}
+        invent = {"block": 99000000, "canon": CANON, "roundKeccak": "0x" + "cd" * 32,
+                  "source": "2026-09-17"}
+
+        cases = [
+            # name, rows, extra argv, expect_ok
+            ("one entry, nothing to cross-check against", [good], [], False),
+            ("same, count declared", [good], ["--allow-unpublished", "1"], True),
+            ("same, wrong count", [good], ["--allow-unpublished", "2"], False),
+            ("empty list", [], [], False),
+            ("bad canon", [dict(good, canon="rhdepth-v1")], [], False),
+            ("descending", [dict(good), dict(good, block=54088398)], [], False),
+            ("duplicate block", [dict(good), dict(good)], [], False),
+            ("short hash", [dict(good, roundKeccak="0x" + "11" * 16)], [], False),
+            ("invented hash appended", [good, invent], [], False),
+        ]
+        for i, (name, rows, extra, expect_ok) in enumerate(cases):
+            lst = t / f"case{i}.jsonl"
+            lst.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows),
+                           encoding="utf-8", newline="\n")
+            rec = t / f"case{i}.json"
+            cmd = [sys.executable, str(me), "--list", str(lst), "--data", str(t / "emptydata"),
+                   "--emit", str(rec), *extra]
+            p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+            got_ok = p.returncode == 0
+            good_case = (got_ok == expect_ok)
+            wrote = rec.exists()
+            # a record may only exist when the list was accepted
+            good_case = good_case and (wrote == expect_ok)
+            ok = ok and good_case
+            print(f"  {'ok  ' if good_case else 'FAIL'}  {name:<42} exit={p.returncode} "
+                  f"record={wrote} expected={'accept' if expect_ok else 'refuse'}")
+    print("selftest: " + ("all negative cases refused and all positive cases accepted" if ok
+                          else "SOME CASES ARE WRONG"))
+    return 0 if ok else 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--list", type=Path, default=Path("backfill-list.jsonl"))
     ap.add_argument("--data", type=Path, default=Path(r"E:\executability-report\data"))
+    ap.add_argument("--selftest", action="store_true",
+                    help="run the negative cases in a temp dir; no data, no network, no key")
     ap.add_argument("--emit", type=Path, default=None,
                     help="write the checked record here (only when the list passes)")
+    ap.add_argument("--allow-unpublished", type=int, default=0, metavar="N",
+                    help="exactly how many entries may be absent from the published data "
+                         "(default 0). An entry nobody cross-checked is not a verified entry, "
+                         "so the count is stated rather than assumed.")
     args = ap.parse_args()
+
+    if args.selftest:
+        return selftest()
 
     if not args.list.is_file():
         print(f"{args.list} not found")
@@ -125,13 +187,20 @@ def main() -> int:
                         f"e.g. {mismatched[:2]}")
 
     absent = [b for b in blocks if b not in published]
+    if not blocks:
+        problems.append("the list has no entries; a record for an empty list opens the submit "
+                        "gate while committing nothing")
+    if len(absent) != args.allow_unpublished:
+        problems.append(
+            f"{len(absent)} entries are absent from the published data but --allow-unpublished "
+            f"is {args.allow_unpublished}. Those entries cannot be cross-checked by definition, "
+            f"so they must be counted explicitly: first few "
+            f"{[f'{b:,}' for b in absent[:5]]}")
     if absent:
-        days = {}
-        for rf in sorted(args.data.glob("*/rounds.jsonl")):
-            pass
         print(f"\nblocks in the list but not yet published: {len(absent)}  "
-              f"(not an error: the list may be fresher than this repo)")
+              f"(declared with --allow-unpublished {args.allow_unpublished})")
         print("  first few:", [f"{b:,}" for b in absent[:5]])
+        print("  these hashes were NOT compared against anything. They go on chain as given.")
 
     missing_from_list = sorted(set(published) - set(blocks))
     if missing_from_list:
@@ -169,7 +238,13 @@ def main() -> int:
               f" the ledger's CANON() against it")
         return 1
 
-    print("\nLIST OK: shape, ordering, canon and every hash agree with the published data")
+    checked = len(blocks) - len(absent)
+    if absent:
+        print(f"\nLIST OK: shape, ordering and canon are valid. {checked} of {len(blocks)} hashes "
+              f"agree with the published data; {len(absent)} were NOT cross-checked.")
+    else:
+        print(f"\nLIST OK: shape, ordering, canon and all {checked} hashes agree with the "
+              f"published data")
     if args.emit:
         record = {
             "list": str(args.list),
@@ -180,6 +255,8 @@ def main() -> int:
             "canon": CANON,
             "canonValue": values[CANON],
             "batch": BATCH,
+            "unpublishedEntries": len(absent),
+            "unpublishedBlocks": absent[:10],
             "checkedAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "checker": "tools/check_backfill_list.py",
         }
