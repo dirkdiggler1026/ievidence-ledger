@@ -160,6 +160,36 @@ def git_head(root: Path) -> str:
                           capture_output=True, text=True).stdout.strip()
 
 
+def git_status(root: Path) -> str:
+    return subprocess.run(["git", "-C", str(root), "status", "--porcelain"],
+                          capture_output=True, text=True).stdout
+
+
+def worktree_problems(porcelain: str, exempt: str) -> list[str]:
+    """Changes in `git status --porcelain` other than the one exempt path.
+
+    A record's `sourceCommit` claims to name the source that was deployed. On a dirty tree it can
+    name a commit that does not contain what is actually running, and nothing in the record would
+    show it -- the tool's claim would be wider than its check.
+
+    The exemption is exactly one path, not "untracked files". This file is untracked until it is
+    first committed, so a bare check would lock the recorder out of its own second record; but
+    exempting every untracked path would also wave through untracked *source*.
+    """
+    out = []
+    for line in porcelain.splitlines():
+        if not line.strip():
+            continue
+        path = line[3:].strip().strip('"')
+        if " -> " in path:                     # renames read as "R  old -> new"
+            path = path.split(" -> ")[-1].strip().strip('"')
+        if path.replace("\\", "/") == exempt.replace("\\", "/"):
+            continue
+        out.append(line.rstrip())
+    return out
+
+
+
 # --------------------------------------------------------------------------------------
 # The schema, enforced on the way out.
 #
@@ -299,8 +329,14 @@ def key_separation_problems(existing: list[str], chain_id: int, owner: str) -> l
     return []
 
 
-def selftest() -> int:
-    """Exercise the write-side refusals. The reader has its own self-test; this is its mirror."""
+def selftest(root: Path) -> int:
+    """Exercise the write-side refusals. The reader has its own self-test; this is its mirror.
+
+    `root` is passed in rather than taken from the working directory. The first version used
+    `Path(".")`, so running `--selftest` from any directory that happened to contain a canon.json
+    validated against that file -- and passed. A self-test that can pass against the wrong file
+    is the same defect as a check that can pass against the wrong file.
+    """
     good = {
         "chainId": 46630,
         "address": "0x" + "a" * 40,
@@ -360,10 +396,27 @@ def selftest() -> int:
 
     # canon.json must resolve the name used in every record.
     try:
-        values = canon_values(Path("."))
+        values = canon_values(root)
         record("canon.json does not define rhdepth-v2", "rhdepth-v2" in values)
     except SystemExit as exc:
         record(f"canon.json unreadable: {exc}", False)
+
+    # The worktree check, exercised on its own parsing rather than through git.
+    dirty = (" M tools/round_count.py\n"
+             "?? deployments.jsonl\n"
+             "?? tools/untracked_new_tool.py\n"
+             "R  docs/old.md -> docs/new.md\n")
+    kept = worktree_problems(dirty, "deployments.jsonl")
+    record("worktree: the record file itself must be exempt",
+           not worktree_problems("?? deployments.jsonl\n", "deployments.jsonl"))
+    record("worktree: untracked source must NOT be exempt",
+           len(kept) == 3 and any("untracked_new_tool" in k for k in kept))
+    record("worktree: a modified tracked file must be caught",
+           any("round_count" in k for k in kept))
+    record("worktree: a rename must be caught under its new path",
+           any("docs/new.md" in k for k in kept))
+    record("worktree: a clean tree yields nothing",
+           not worktree_problems("", "deployments.jsonl"))
 
     # Key separation: same owner refused, different owner allowed, testnet not checked -- and
     # the message must claim no more than the check establishes.
@@ -402,7 +455,7 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.selftest:
-        return selftest()
+        return selftest(args.root.resolve())
 
     if args.chain_id is None:
         print("--chain-id is required (4663 or 46630)")
@@ -497,6 +550,20 @@ def main() -> int:
         return 1
 
     cs = compiler_settings(root)
+
+    # Before anything is written: a dirty tree makes `sourceCommit` a claim the check cannot
+    # support. Refuse, and name every offending path rather than the first.
+    exempt = os.path.relpath(target, root).replace("\\", "/")
+    dirty = worktree_problems(git_status(root), exempt)
+    if dirty:
+        print("REFUSING TO RECORD - the worktree is not clean, so sourceCommit would name a")
+        print(f"commit that does not contain what was deployed. (only {exempt!r} is exempt)")
+        for d in dirty[:20]:
+            print(f"  x {d}")
+        if len(dirty) > 20:
+            print(f"  ... and {len(dirty) - 20} more")
+        return 1
+
     record = {
         "chainId": args.chain_id,
         "address": dep["address"],

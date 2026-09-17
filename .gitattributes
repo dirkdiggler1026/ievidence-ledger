@@ -3,3 +3,9 @@
 *.toml text eol=lf
 *.md text eol=lf
 *.yml text eol=lf
+# The deployment record and the frozen round list are hashed as file bytes -- deployments.jsonl
+# by its own sha256, the round list by Commit.s.sol's gate 1 and by the checker's listSha256. A
+# Windows checkout that rewrote them to CRLF would make the local bytes differ from the committed
+# ones, and a cross-machine comparison of that hash would then disagree for a reason that has
+# nothing to do with the data.
+*.jsonl text eol=lf
