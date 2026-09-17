@@ -61,11 +61,14 @@ def load_published(data: Path) -> dict[int, str]:
 
 
 def selftest() -> int:
-    """Negative cases only, in a temp dir, with no published data and no network.
+    """Every check, one case each, in a temp dir with a small published data set.
 
-    A checker that only ever sees good input proves nothing. Every case here is a list this
-    tool must REFUSE, including the two that used to pass: an entry whose hash was invented,
-    and an empty list. Mirrors record_deployment.py --selftest.
+    The first version ran every case against an empty data directory, so every entry was
+    "unpublished" and every negative case was refused by the unpublished count alone. Deleting
+    the ordering, duplicate, canon, hash-length or contradiction check left it green. So here
+    every refusal case is otherwise valid and fully published, and the refusal REASON is
+    asserted, not only the exit code: a case refused for another reason proves nothing about
+    the check it is named after.
     """
     import subprocess
     import tempfile
@@ -74,42 +77,50 @@ def selftest() -> int:
     ok = True
     with tempfile.TemporaryDirectory() as td:
         t = Path(td)
-        (t / "emptydata").mkdir()
-        good = {"block": 54088399, "canon": CANON, "roundKeccak": "0x" + "11" * 32,
-                "source": "2026-09-04"}
-        invent = {"block": 99000000, "canon": CANON, "roundKeccak": "0x" + "cd" * 32,
-                  "source": "2026-09-17"}
+        day = t / "data" / "2026-09-04"
+        day.mkdir(parents=True)
+        a = {"block": 54088399, "canon": CANON, "roundKeccak": "0x" + "11" * 32}
+        b = {"block": 54088400, "canon": CANON, "roundKeccak": "0x" + "22" * 32}
+        new = {"block": 99000000, "canon": CANON, "roundKeccak": "0x" + "cd" * 32}
+        (day / "rounds.jsonl").write_text(
+            "".join(json.dumps(r) + "\n" for r in (a, b)), encoding="utf-8", newline="\n")
 
         cases = [
-            # name, rows, extra argv, expect_ok
-            ("one entry, nothing to cross-check against", [good], [], False),
-            ("same, count declared", [good], ["--allow-unpublished", "1"], True),
-            ("same, wrong count", [good], ["--allow-unpublished", "2"], False),
-            ("empty list", [], [], False),
-            ("bad canon", [dict(good, canon="rhdepth-v1")], [], False),
-            ("descending", [dict(good), dict(good, block=54088398)], [], False),
-            ("duplicate block", [dict(good), dict(good)], [], False),
-            ("short hash", [dict(good, roundKeccak="0x" + "11" * 16)], [], False),
-            ("invented hash appended", [good, invent], [], False),
+            # name, rows, extra argv, reason that must appear (None = must accept), line ending
+            ("published pair", [a, b], [], None, "\n"),
+            ("one unpublished, declared", [a, b, new], ["--allow-unpublished", "1"], None, "\n"),
+            ("one unpublished, undeclared", [a, b, new], [],
+             "absent from the published data", "\n"),
+            ("one unpublished, wrong count", [a, b, new], ["--allow-unpublished", "2"],
+             "absent from the published data", "\n"),
+            ("empty list", [], [], "no entries", "\n"),
+            ("hash contradicts published", [a, dict(b, roundKeccak="0x" + "33" * 32)], [],
+             "CONTRADICT", "\n"),
+            ("descending", [b, a], [], "not in ascending order", "\n"),
+            ("duplicate block", [a, a], [], "duplicate blocks", "\n"),
+            ("bad canon", [dict(a, canon="rhdepth-v1"), b], [], "expected 'rhdepth-v2'", "\n"),
+            ("short hash", [dict(a, roundKeccak="0x" + "11" * 16), b], [], "not 32 bytes", "\n"),
+            ("hash is not hex", [a, dict(b, roundKeccak="0x" + "zz" * 32)], [], "not hex", "\n"),
+            ("block above uint64", [a, dict(b, block=2 ** 64)], [], "uint64 range", "\n"),
+            ("CRLF line endings", [a, b], [], "CR bytes", "\r\n"),
         ]
-        for i, (name, rows, extra, expect_ok) in enumerate(cases):
+        for i, (name, rows, extra, reason, eol) in enumerate(cases):
             lst = t / f"case{i}.jsonl"
-            lst.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows),
-                           encoding="utf-8", newline="\n")
+            lst.write_bytes("".join(json.dumps(r, sort_keys=True) + eol for r in rows).encode())
             rec = t / f"case{i}.json"
-            cmd = [sys.executable, str(me), "--list", str(lst), "--data", str(t / "emptydata"),
+            cmd = [sys.executable, str(me), "--list", str(lst), "--data", str(t / "data"),
                    "--emit", str(rec), *extra]
             p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
-            got_ok = p.returncode == 0
-            good_case = (got_ok == expect_ok)
             wrote = rec.exists()
-            # a record may only exist when the list was accepted
-            good_case = good_case and (wrote == expect_ok)
+            if reason is None:
+                good_case = p.returncode == 0 and wrote
+            else:
+                good_case = p.returncode == 1 and not wrote and reason in p.stdout
             ok = ok and good_case
-            print(f"  {'ok  ' if good_case else 'FAIL'}  {name:<42} exit={p.returncode} "
-                  f"record={wrote} expected={'accept' if expect_ok else 'refuse'}")
-    print("selftest: " + ("all negative cases refused and all positive cases accepted" if ok
-                          else "SOME CASES ARE WRONG"))
+            print(f"  {'ok  ' if good_case else 'FAIL'}  {name:<32} exit={p.returncode} "
+                  f"record={wrote} expected={'accept' if reason is None else 'refuse: ' + reason}")
+    print("selftest: " + ("every check refused its own case, and the valid lists were accepted"
+                          if ok else "SOME CASES ARE WRONG"))
     return 0 if ok else 1
 
 
@@ -118,7 +129,8 @@ def main() -> int:
     ap.add_argument("--list", type=Path, default=Path("backfill-list.jsonl"))
     ap.add_argument("--data", type=Path, default=Path(r"E:\executability-report\data"))
     ap.add_argument("--selftest", action="store_true",
-                    help="run the negative cases in a temp dir; no data, no network, no key")
+                    help="run the negative cases in a temp dir; a two-round temp data set, "
+                         "no network, no key")
     ap.add_argument("--emit", type=Path, default=None,
                     help="write the checked record here (only when the list passes)")
     ap.add_argument("--allow-unpublished", type=int, default=0, metavar="N",
@@ -143,6 +155,12 @@ def main() -> int:
                 return 1
 
     problems: list[str] = []
+    # round_count.py refuses to write CR bytes, but the gate is here: splitlines() above
+    # accepts CRLF, while listSha256 is over file bytes. A list converted on the way (an
+    # editor, a transfer) would otherwise get a record for a different artefact.
+    if b"\r" in args.list.read_bytes():
+        problems.append("the list contains CR bytes: its sha256 describes a CRLF file, not "
+                        "the LF artefact round_count.py emits")
     print(f"list   {args.list}   {len(entries)} entries")
 
     # shape
@@ -256,7 +274,10 @@ def main() -> int:
             "canonValue": values[CANON],
             "batch": BATCH,
             "unpublishedEntries": len(absent),
-            "unpublishedBlocks": absent[:10],
+            # Named for what it is: the first ten, not the list. A field called
+            # `unpublishedBlocks` that silently stops at ten is the naming rule this project
+            # keeps re-learning -- a name must not promise more than the thing establishes.
+            "unpublishedBlocksFirst10": absent[:10],
             "checkedAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "checker": "tools/check_backfill_list.py",
         }
