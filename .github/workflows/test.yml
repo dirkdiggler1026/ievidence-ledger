@@ -7,7 +7,42 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  # Pinned, not floating. `forge fmt` rules change between releases, so an unpinned toolchain can
+  # turn this repository red with no code change at all. That is not hypothetical: v1.8.3 was
+  # published 2026-09-15T12:49:47Z and the run four minutes later was already on it. The version
+  # below is the one that produced the green run on 8bd9fb5.
+  FOUNDRY_VERSION: v1.8.3
+
 jobs:
+  # Formatting is its own job on purpose. When it lived in the `check` job, a formatting failure
+  # skipped build, tests, the BOM check, the canon check, the ABI check, the recorder self-test
+  # and both refusal checks -- twelve steps, for two commits, silently. A gate that hides the
+  # gates behind it is worse than no gate.
+  fmt:
+    name: Formatting
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      # Pinned by SHA as well as by version: a moving tag can change what "foundry-toolchain@v1"
+      # installs without any commit here.
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: Show Forge version
+        run: forge --version
+
+      - name: Run Forge fmt
+        run: forge fmt --check
+
   check:
     name: Foundry project
     runs-on: ubuntu-latest
@@ -20,13 +55,12 @@ jobs:
           submodules: recursive
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
 
       - name: Show Forge version
         run: forge --version
-
-      - name: Run Forge fmt
-        run: forge fmt --check
 
       - name: Run Forge build
         run: forge build --sizes
@@ -88,6 +122,14 @@ jobs:
           python -m compileall -q tools
           python tools/round_count.py --help > /dev/null
           python tools/record_deployment.py --help > /dev/null
+          python tools/check_backfill_list.py --help > /dev/null
+
+      # "--help exits 0" says the file parses. It does not say the checker refuses anything.
+      # The two cases that matter most are the two that used to pass: an entry whose hash was
+      # invented (it was reported, never compared, and the record still opened the submit gate)
+      # and an empty list. This asserts refusal, in a temp dir, with no data and no network.
+      - name: The backfill checker must refuse a bad list
+        run: python tools/check_backfill_list.py --selftest
 
       # The write side refuses the same set the read side refuses, plus key separation. The
       # reader has a self-test; this is its mirror, and it touches no file and no network.
