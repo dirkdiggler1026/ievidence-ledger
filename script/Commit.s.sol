@@ -100,7 +100,11 @@ contract Commit is Script {
 
     /// @dev Gates 1 and 2, then parse. A missing record makes readFile revert naming the path,
     ///      which is the refusal we want.
-    function _loadValidated(Cfg memory cfg, EvidenceLedger ledger) internal view returns (Round[] memory) {
+    function _loadValidated(Cfg memory cfg, EvidenceLedger ledger)
+        internal
+        view
+        returns (Round[] memory)
+    {
         string memory checkRaw = vm.readFile(cfg.checkPath);
         string memory raw = vm.readFile(cfg.listPath);
 
@@ -114,7 +118,9 @@ contract Commit is Script {
         }
         uint8 recordedValue = uint8(vm.parseJsonUint(checkRaw, ".canonValue"));
         uint8 onchainCanon = ledger.CANON();
-        if (onchainCanon != recordedValue) revert CanonMismatch(onchainCanon, recordedValue, cfg.canonName);
+        if (onchainCanon != recordedValue) {
+            revert CanonMismatch(onchainCanon, recordedValue, cfg.canonName);
+        }
         // Assigned here rather than returned: the read-back gate compares against this value, and
         // an earlier version of this function left it at the struct's initialiser of 0. Zero is
         // the "absent" sentinel in this project, so the wrong value looked deliberate, and the dry
@@ -158,12 +164,9 @@ contract Commit is Script {
     }
 
     /// @dev Gate 6 (batch size is a rule, the count follows) and gate 4 (read back each batch).
-    function _commitAll(
-        EvidenceLedger ledger,
-        Round[] memory all,
-        uint256 start,
-        Cfg memory cfg
-    ) internal {
+    function _commitAll(EvidenceLedger ledger, Round[] memory all, uint256 start, Cfg memory cfg)
+        internal
+    {
         uint256 remaining = all.length - start;
         uint256 batches = (remaining + cfg.batchSize - 1) / cfg.batchSize;
 
