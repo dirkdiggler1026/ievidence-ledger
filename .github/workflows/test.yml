@@ -125,9 +125,11 @@ jobs:
           python tools/check_backfill_list.py --help > /dev/null
 
       # "--help exits 0" says the file parses. It does not say the checker refuses anything.
-      # The two cases that matter most are the two that used to pass: an entry whose hash was
-      # invented (it was reported, never compared, and the record still opened the submit gate)
-      # and an empty list. This asserts refusal, in a temp dir, with no data and no network.
+      # The self-test builds a two-round temp data set and asserts, per check, that the refusal
+      # came from THAT check -- not merely that the exit code was non-zero. An earlier version
+      # of it used an empty data set, so every case was refused by the unpublished count and
+      # five of the checks could be deleted without the self-test noticing. Mutation-tested:
+      # disabling any single check now fails the case named after it.
       - name: The backfill checker must refuse a bad list
         run: python tools/check_backfill_list.py --selftest
 

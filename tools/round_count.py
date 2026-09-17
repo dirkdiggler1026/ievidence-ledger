@@ -309,7 +309,12 @@ def main() -> int:
         # ReadbackFailed: compare against what is actually there, not against what was intended.
         written = args.emit.read_bytes()
         if b"\r" in written:
-            print("REFUSING: the list just written contains CR bytes. The ledger hashes file "
+            # Remove it as well as refusing. Leaving a rejected artefact at the exact path the
+            # operator was told to hand to the contract is a trap: the refusal scrolls past,
+            # and the file is still there.
+            args.emit.unlink()
+            print("REFUSING: the list written to "
+                  f"{args.emit} contained CR bytes and has been deleted. The ledger hashes file "
                   "bytes and the parser splits on \\n, so a CRLF list is a different artefact "
                   "from the one that was measured.")
             return 1
