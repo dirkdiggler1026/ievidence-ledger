@@ -300,8 +300,20 @@ def main() -> int:
     if args.emit:
         args.emit.parent.mkdir(parents=True, exist_ok=True)
         body = "\n".join(json.dumps(r, sort_keys=True) for r in rows) + "\n"
-        args.emit.write_text(body, encoding="utf-8")
-        digest = hashlib.sha256(body.encode()).hexdigest()
+        # newline="\n" is not cosmetic. Without it write_text translates every \n into the
+        # platform separator, so on Windows the file on disk is CRLF while `body` is LF.
+        args.emit.write_text(body, encoding="utf-8", newline="\n")
+        # Hash the bytes that were written, not the string that was built. The two are the same
+        # object only when the platform agrees, and the gate the submit script enforces is over
+        # file bytes -- so the number printed here has to be over file bytes too. Same shape as
+        # ReadbackFailed: compare against what is actually there, not against what was intended.
+        written = args.emit.read_bytes()
+        if b"\r" in written:
+            print("REFUSING: the list just written contains CR bytes. The ledger hashes file "
+                  "bytes and the parser splits on \\n, so a CRLF list is a different artefact "
+                  "from the one that was measured.")
+            return 1
+        digest = hashlib.sha256(written).hexdigest()
         print()
         print(f"frozen list      {args.emit}  ({len(rows)} rows)")
         print(f"sha256           {digest}")
