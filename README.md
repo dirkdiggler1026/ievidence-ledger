@@ -37,6 +37,14 @@ is what they point at — so this paragraph had to change rather than the claim.
 `deployments.jsonl` is the append-only record of deployments, one line each, and
 `deployments.README.md` says what a line means and which checks refuse a bad one.
 
+**Two different things are called "canon" here.** A *serialisation canon* is a name —
+`rhdepth-v2`, `rhdepth-oneside-v1` — that tells a reader which preimage rule to apply to a round's
+rows. `CANON()` is the `uint8` this contract stores beside each hash, and it is one value per
+deployment; `canon.json` maps the name to that value. The report's second series,
+`rhdepth-oneside-v1`, has a serialisation canon and **no** `CANON()` value, and none of its rounds
+is anchored in either ledger — not by omission but by position: both watermarks sit below that
+series' earliest round (block 72,639,319), and a watermark only moves forward.
+
 | file | what it is |
 |---|---|
 | `spec-v1.0.md` | contract interface, canonical serialization, anchor model, demo scope |
