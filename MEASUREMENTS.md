@@ -124,6 +124,85 @@ to measure what a local EVM cannot:
 2. that the slot count matches (2 per round), i.e. that the local layout is the deployed layout;
 3. the real cost at real prices, as a snapshot with its block number attached.
 
+## What the two runs measured (answered 2026-09-26)
+
+The section above lists three things a local EVM cannot measure. Two runs happened — testnet
+2026-09-19, mainnet 2026-09-23 — and each answer says which chain it comes from and what it was
+measured from. **The two chains are not compared with each other**: the runs are in different
+windows, and `perL1CalldataByte` moved inside a single window (the table above: 0 → 41,059,664 →
+85,625,520 → 0).
+
+### 1. What ArbOS adds to the local figure
+
+| run | rounds | transactions | total gas | gas per round | vs local 45,650 |
+|---|---|---|---|---|---|
+| testnet 46630, 09-19 | 610 | 10 | 29,012,366 | 47,561.3 | **+1,911.3 (+4.2%)** |
+| mainnet 4663, 09-23 | 850 | 14 | 39,113,313 | 46,015.7 | **+365.7 (+0.8%)** |
+
+Measured from the receipts under `broadcast/Commit.s.sol/<chain>/`, with the rehearsal artifacts
+(`broadcast/_rehearsal/`) excluded — and the chain confirms that exclusion independently: each
+ledger carries exactly one `OwnershipTransferred` followed by 14 (mainnet) / 10 (testnet)
+`BatchCommitted` events, so no unarchived real run exists.
+
+Rounds per transaction are **not** inferred from gas. The `BatchCommitted` events carry the count
+and decode to 13×64 + 18 = 850 and 9×64 + 34 = 610; an earlier pass had estimated the tail batches
+at 18 and 34 from the last transaction's gas, which the events then confirmed exactly.
+
+### 2. The deployed storage layout is the local one
+
+Read with `eth_getStorageAt` on both ledgers:
+
+```
+slot 0  owner                                                       == the owner published on the report page
+slot 1  pendingOwner (low 20 bytes) + lastCommittedBlock (next 8)    == 0 and 64,907,249 / 69,196,861
+slot 2  records mapping head (empty)
+```
+
+`address(20B) + uint64(8B) = 28B`, so Solidity packs those two into one slot. Each
+`CommitRecord{bytes32 roundHash; uint8 canon}` occupies two slots, which is the "2 slots per
+round" the gas figure assumes, and 47,561 gas per round is consistent with two cold SSTOREs plus
+overhead.
+
+Two errors of mine are recorded here, because both are the error class this repository keeps
+finding — measuring a boundary one imposed and reading it as a property of the object. The first
+version printed only the low 20 bytes of slot 1, read zero there, and announced that the deployed
+layout disagreed with the local one; the zero was produced by my own truncation, exactly like the
+60-character revert message in the collector. The second printed the whole slot but sliced the
+wrong eight bytes. The checker also reported an HTTP 403 from the RPC as "the layout disagrees",
+merging a refusal with an answer; it now exits 3 and draws no conclusion.
+
+### 3. Cost at real prices, with the block numbers
+
+| run | transactions | total gas | gas price | cost | per round |
+|---|---|---|---|---|---|
+| testnet 46630 | 10 | 29,012,366 | 10,000,000 wei (uniform) | **0.000290123660 ETH** | 0.4756 µETH |
+| mainnet 4663 | 14 | 39,113,313 | 56,122,000 .. 57,880,000 wei | **0.002222287992 ETH** | 2.6145 µETH |
+
+Cost is the sum of `gasUsed × effectiveGasPrice` per transaction, not total gas times an average
+price: each of the 14 mainnet transactions paid a different price, and an average would produce a
+figure nobody can recompute. The testnet figure agrees with the 0.00029 ETH recorded when the
+backfill was broadcast.
+
+```
+testnet  blocks 0x73f29e3 .. 0x73f2a80   = 121,580,003 .. 121,580,160   (10 transactions)
+mainnet  blocks 0x42ecf4e .. 0x42ed001   =  70,176,590 ..  70,176,769   (14 transactions)
+```
+
+### 4. `perL1CalldataByte` during the runs
+
+* **mainnet 4663 — measured.** 14/14 transaction blocks return **0**: `0x42ecf4e · 0x42ecf5c ·
+  0x42ecf69 · 0x42ecf78 · 0x42ecf85 · 0x42ecf94 · 0x42ecfa1 · 0x42ecfaf · 0x42ecfbd · 0x42ecfca ·
+  0x42ecfd7 · 0x42ecfe5 · 0x42ecff3 · 0x42ed001`. Over the same blocks `perArbGasTotal` was
+  56,122,000 .. 57,880,000 wei and `perStorageAllocation = perArbGasTotal × 20,000` held on 14/14.
+* **testnet 46630 — open, and not measurable from here.** The public endpoint refuses historical
+  state at 121,580,003 and 121,580,160 (it answers for `latest`; the refusal names the state
+  root), and that chain has no archive endpoint. It stays open until the next real commit can be
+  sampled.
+
+**Zero in one window is not "free".** The table above records this rate oscillating between zero
+and 85,625,520 wei per byte inside a single window; this section exists partly so that a zero
+measured once is not read as a property of the chain.
+
 ## Reproducing
 
 ```sh
